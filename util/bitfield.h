@@ -31,7 +31,9 @@
 #include <stdint.h> /* for uint8_t, etc. */
 #include <string.h> /* for memset, etc. */
 
-#define BITFIELD_DECL(name, size) uint8_t name[(size + 7)/ 8]
+#define BITFIELD_MEM(size) ((size + 7)/8)
+
+#define BITFIELD_DECL(name, size) uint8_t name[BITFIELD_MEM(size)]
 
 #define BITFIELD_ZERO(name) do { \
 	uint8_t *name8 = name; \

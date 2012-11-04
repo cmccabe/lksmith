@@ -66,28 +66,28 @@ struct lksmith_spinlock_t {
 /**
  * There was an out-of-memory error.
  */
-#define LKSMITH_ERROR_OOM -1
+#define LKSMITH_ERROR_OOM 1
 
 /**
  * A pthread_lock or pthread_spin_lock operation did not succeed.
  */
-#define LKSMITH_ERROR_LOCK_OPER_FAILED -2
+#define LKSMITH_ERROR_LOCK_OPER_FAILED 2
 
 /**
  * Bad lock ordering was detected.
  * This may cause deadlocks in the future if it is not corrected.
  */
-#define LKSMITH_ERROR_BAD_LOCK_ORDERING_DETECTED -3
+#define LKSMITH_ERROR_BAD_LOCK_ORDERING_DETECTED 3
 
 /**
  * There was an attempt to destroy a mutex while it was still in use.
  */
-#define LKSMITH_ERROR_DESTROY_WHILE_IN_USE -4
+#define LKSMITH_ERROR_DESTROY_WHILE_IN_USE 4
 
 /**
  * There was an attempt to re-initialize a mutex while it was still in use.
  */
-#define LKSMITH_ERROR_CREATE_WHILE_IN_USE -5
+#define LKSMITH_ERROR_CREATE_WHILE_IN_USE 5
 
 /******************************************************************
  *  Locksmith API

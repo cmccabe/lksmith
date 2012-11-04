@@ -21,7 +21,7 @@ struct lksmith_lock_data {
   uint32_t id;
   /** Size of the before bitfield */
   int before_size;
-  /** Bitfield of locks that this lock must be taken before. */
+  /** Bitfield of locks that this lock must be taken before this one. */
   uint8_t before[0];
 };
 
@@ -57,6 +57,19 @@ static uint8_t * __restrict g_locks_used;
 /******************************************************************
  *  Locksmith functions
  *****************************************************************/
+static int lksmith_error_to_errno(int lkerr)
+{
+  switch (lkerr) {
+  case LKSMITH_ERROR_OOM:
+    return ENOMEM;
+  case LKSMITH_ERROR_DESTROY_WHILE_IN_USE:
+  case LKSMITH_ERROR_CREATE_WHILE_IN_USE:
+    return EINVAL;
+  default:
+    return EIO;
+  }
+}
+
 uint32_t lksmith_get_version(void)
 {
   return LKSMITH_API_VERSION;
@@ -106,7 +119,7 @@ static int lksmith_realloc_lock_data(struct lksmith_lock_data **data,
   }
   new_data = realloc(data, new_size);
   if (!new_data) {
-    return LKSMITH_ERROR_OOM;
+    return -LKSMITH_ERROR_OOM;
   }
   if (old_size == 0) {
     /* zero everything */
@@ -129,7 +142,7 @@ static int lksmith_realloc_lock_data(struct lksmith_lock_data **data,
  * Note: you must call this function with the g_internal_lock held.
  *
  * @return          If positive: a new allocated lock ID.
- *                  If negative: an error code.
+ *                  If negative: a locksmith error code.
  */
 static int lksmith_alloc_next_lock_id(void)
 {
@@ -142,17 +155,18 @@ static int lksmith_alloc_next_lock_id(void)
       break;
     }
   }
+  // TODO: optimize with "find first zero bit" compiler intrinsics?
   if (i > g_locks_size) {
     if (BITFIELD_MEM(i) > BITFIELD_MEM(g_locks_size)) {
       new_locks_used = realloc(g_locks_used, BITFIELD_MEM(i));
       if (!new_locks_used) {
-        return LKSMITH_ERROR_OOM;
+        return -LKSMITH_ERROR_OOM;
       }
       g_locks_used = new_locks_used;
     }
     new_locks = realloc(g_locks, i * sizeof(struct lksmith_lock_data*));
     if (!new_locks) {
-      return LKSMITH_ERROR_OOM;
+      return -LKSMITH_ERROR_OOM;
     }
     g_locks = new_locks;
     g_locks_size = i;
@@ -169,7 +183,14 @@ int lksmith_pthread_mutex_init(const char * __restrict name,
   lksmith_error_cb_t error_cb;
   char buf[256] = { 0 };
 
+  ret = lksmith_realloc_lock_data(&data, LKSMITH_BEFORE_MIN);
   pthread_mutex_lock(&g_internal_lock);
+  if (ret) {
+    ret = LKSMITH_ERROR_OOM;
+    snprintf(buf, sizeof(buf), "lksmith_pthread_mutex_init(%s) "
+        "out of memory trying to allocate lksmith_lock_data.");
+    goto error;
+  }
   next_lock_id = lksmith_alloc_next_lock_id();
   if (next_lock_id < 0) {
     ret = LKSMITH_ERROR_OOM;
@@ -177,18 +198,10 @@ int lksmith_pthread_mutex_init(const char * __restrict name,
         "out of memory trying to allocate a new lock id.", name);
     goto error:
   }
-  ret = lksmith_realloc_lock_data(&data, LKSMITH_BEFORE_MIN);
-  if (ret) {
-    ret = LKSMITH_ERROR_OOM;
-    snprintf(buf, sizeof(buf), "lksmith_pthread_mutex_init(%s) "
-        "out of memory trying to allocate lksmith_lock_data.");
-    goto error;
-  }
   data->id = next_lock_id;
-  prev = __sync_val_compare_and_swap(&mutex->info.data, NULL);
+  prev = __sync_val_compare_and_swap(&mutex->info.data, NULL, data);
   if (prev) {
     error_cb = g_error_cb;
-    pthread_mutex_unlock(&g_internal_lock);
     ret = LKSMITH_ERROR_CREATE_WHILE_IN_USE;
     snprintf(buf, sizeof(buf), "lksmith_pthread_mutex_init(%s) "
         "this mutex has already been initialized!");
@@ -198,22 +211,34 @@ int lksmith_pthread_mutex_init(const char * __restrict name,
   return 0;
 
 error:
-  free(data);
   error_cb = g_error_cb;
   pthread_mutex_unlock(&g_internal_lock);
+  free(data);
   error_cb(ret, buf);
-  switch (ret) {
-  case LKSMITH_ERROR_CREATE_WHILE_IN_USE:
-    return EBUSY;
-  case LKSMITH_ERROR_OOM:
-    return ENOMEM;
-  default:
-    return EINVAL;
-  }
+  return lksmith_error_to_errno(ret);
 }
 
 int lksmith_pthread_mutex_destroy(pthread_mutex_t *__mutex)
 {
+  struct lksmith_lock_data *prev;
+
+  __sync_synchronize();
+  if (!__sync_bool_compare_and_swap(&mutex->info.data,
+                                    mutex->info.data, NULL)) {
+  }
+  
+  // OK, so... in order to re-use the mutex number, we'd have to manually clear
+  // the entry in the bitfield for all mutexes-- which sucks.
+  // We could have a scavenger thread to do this, plus a condition variable.  I
+  // suppose that's the best answer?
+
+  if (prev) {
+    error_cb = g_error_cb;
+    ret = LKSMITH_ERROR_CREATE_WHILE_IN_USE;
+    snprintf(buf, sizeof(buf), "lksmith_pthread_mutex_init(%s) "
+        "this mutex has already been initialized!");
+    goto error;
+  }
 }
 
 int lksmith_pthread_mutex_trylock(pthread_mutex_t *__mutex, int bypass)
