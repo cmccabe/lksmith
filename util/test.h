@@ -1,4 +1,6 @@
 /*
+ * vim: ts=8:sw=8:tw=79:noet
+ *
  * Copyright (c) 2011-2012, the Locksmith authors.
  * All rights reserved.
  *
