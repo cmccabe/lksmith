@@ -56,7 +56,15 @@ extern "C" {
  *****************************************************************/
 struct lksmith_lock_data;
 
+/**
+ * Maximum length of a lock name, including the terminating NULL byte.
+ */
 #define LKSMITH_LOCK_NAME_MAX 16
+
+/**
+ * Maximum length of a thread name, including the terminating NULL byte.
+ */
+#define LKSMITH_THREAD_NAME_MAX 16
 
 struct lksmith_lock_info {
 	/** Private lksmith data, or NULL if the lock hasn't been initialized
@@ -87,7 +95,9 @@ struct lksmith_spinlock_t {
  * Similar to PTHREAD_MUTEX_INITIALIZER, this can be used to initialize a mutex
  * as part of the mutex declaration.
  *
- * Note: the name string will be shallow-copied.
+ * Note: the name string will be deep-copied.
+ *	The copy will be truncated to LKSMITH_LOCK_NAME_MAX bytes
+ *	long, including the terminating null.
  */
 #define LKSMITH_MUTEX_INITIALIZER(name) \
 	{ PTHREAD_MUTEX_INITIALIZER, { name, 0, 0, 0 } } 
@@ -183,8 +193,9 @@ void lksmith_error_cb_to_stderr(int code, const char *__restrict msg);
  * This function is thread-safe.
  *
  * @param name		Human-readable name to use to identify this lock.
- *			It will be truncated to LKSMITH_LOCK_NAME_MAX bytes
- *			long, including the terminating null.
+ * 			It will be deep-copied.  The copy will be truncated
+ * 			to LKSMITH_LOCK_NAME_MAX bytes long, including the
+ * 			terminating null.
  * @param __mutex	The Locksmith mutex to initialize.
  * @param __mutexattr	Pthread mutex attributes, or NULL (man
  *			pthread_mutex_init for details.)
@@ -200,16 +211,8 @@ int lksmith_mutex_init (const char * __restrict name,
 int lksmith_mutex_destroy(lksmith_mutex_t *__mutex)
 	__nonnull ((1));
 
-/* Try locking a mutex.
- *
- * @param mut		Pointer to the lksmith mutex
- *
- * @return
- */
-int lksmith_mutex_trylock(lksmith_mutex_t *__mutex)
-	__nonnull ((1));
-
-/* Lock a mutex.
+/**
+ * Lock a mutex.
  *
  * @param mut		Pointer to the lksmith mutex
  *
@@ -218,19 +221,45 @@ int lksmith_mutex_trylock(lksmith_mutex_t *__mutex)
 int lksmith_mutex_lock(lksmith_mutex_t *__mutex)
 	__nonnull ((1));
 
-/* Wait until lock becomes available, or specified time passes.
+/**
+ * Try locking a mutex.
  *
- * @param mut         Pointer to the lksmith mutex
+ * @param mut		Pointer to the lksmith mutex
  *
  * @return
  */
-int lksmith_mutex_timedlock (lksmith_mutex_t *__restrict __mutex,
-				    __const struct timespec *__restrict
-				    __abstime) __lksmith_THROW __nonnull ((1, 2));
+int lksmith_mutex_trylock(lksmith_mutex_t *__mutex)
+	__nonnull ((1));
 
-/* Unlock a mutex.  */
-int lksmith_pthread_mutex_unlock (lksmith_mutex_t *__mutex)
-	__lksmith_THROW __nonnull ((1));
+/**
+ * Wait until lock becomes available, or specified time passes.
+ *
+ * @param __mutex	Pointer to the lksmith mutex
+ *
+ * @return		0 on success, or the error code.
+ */
+int lksmith_mutex_timedlock(lksmith_mutex_t *__restrict __mutex,
+				    __const struct timespec *__restrict
+				    __abstime) __nonnull ((1, 2));
+
+/**
+ * Unlock a mutex.
+ *
+ * @param __mutex	Pointer to the lksmith mutex
+ *
+ * @return		0 on success, or the error code.
+ */
+int lksmith_mutex_unlock(lksmith_mutex_t *__mutex) __nonnull ((1));
+
+/**
+ * Set the thread name.
+ *
+ * @param name		The name to use for this thread.
+ *			This string will be deep-copied.
+ *			The copy will be truncated to LKSMITH_THREAD_NAME_MAX
+ *			bytes long, including the terminating null.
+ */
+void lksmith_set_thread_name(const char * const name);
 
 #ifdef __cplusplus
 }
