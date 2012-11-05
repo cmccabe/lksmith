@@ -22,16 +22,24 @@ set(CMAKE_BUILD_TYPE, Release) # can also be Debug
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -fno-strict-aliasing")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_REENTRANT -D_FILE_OFFSET_BITS=64")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_GNU_SOURCE")
-# We use pthread_key_create with a non-NULL destructor parameter, so don't
-# allow unloading our shared libraries.  If we did allow this, we might get
-# users into a situation where the destructor functions were invoked, but they
-# had been unloaded.
+# We use pthread_key_create with a non-NULL destructor parameter, so we
+# cannot allow our shared library to be unloaded.  If we did allow this,
+# we might get users into a situation where the destructor functions were
+# invoked, but they had been unloaded.
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -z nodelete")
 
 set(CMAKE_C_FLAGS_RELEASE "-O3 -Wuninitialized")
 set(CMAKE_C_FLAGS_DEBUG "-g -O2 -fstack-protector -Werror -rdynamic")
 set(CMAKE_CURRENT_BINARY_DIR, builds)
 SET(CMAKE_INSTALL_PREFIX /usr/local)
+
+# If our compiler and linker both support the __thread attribute, we can use
+# it as a more efficient alternative to POSIX thread-local storage in some
+# scenarios.  This should always work on Linux.
+INCLUDE(CheckCSourceCompiles)
+CHECK_C_SOURCE_COMPILES("int main(void) { static __thread int i = 0; return 0; }" HAVE_IMPROVED_TLS)
+
+CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/config.h.cmake ${CMAKE_BINARY_DIR}/config.h)
 
 # Set up include paths
 include_directories(
