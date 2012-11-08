@@ -30,11 +30,11 @@ class LMutex(object):
                 l.selfmutex.acquire()
                 l.after[self] = 1
                 l.selfmutex.release()
-        self.mutex.acquire()
         self.selfmutex.acquire()
         for l in add_to_before.keys():
-            self.after[l] = 1
+            self.before[l] = 1
         self.selfmutex.release()
+        self.mutex.acquire()
         tls.held[self] = 1
         tls.print_held_locks()
     def unlock(self, tls):
@@ -42,6 +42,15 @@ class LMutex(object):
         self.mutex.release()
     def __str__(self):
         return self.name
+    def print_sets(self):
+        self.selfmutex.acquire()
+        print "Lock " + str(self.name) + " before set: ",
+        for k in sorted(self.before.keys()):
+            print str(k) + " ", 
+        print ", after set: ",
+        for k in sorted(self.after.keys()):
+            print str(k) + " ", 
+        self.selfmutex.release()
 
 lock_a = LMutex("a")
 lock_b = LMutex("b")
@@ -58,7 +67,7 @@ class LThreadData(object):
             print str(k) + " ", 
         print
 def MyThread1(ident):
-    for i in range(1, 100):
+    for i in range(1, 10):
         lock_a.lock(ident)
         print str(ident) + " is accessing a!"
         lock_b.lock(ident)
@@ -66,6 +75,8 @@ def MyThread1(ident):
         lock_b.unlock(ident)
         lock_a.unlock(ident)
         time.sleep(0.01)
+        #lock_a.print_sets()
+        #lock_b.print_sets()
 def MyThread2(ident):
     for i in range(1, 100):
         lock_b.lock(ident)
@@ -77,8 +88,8 @@ def MyThread2(ident):
         time.sleep(0.01)
 
 t1 = threading.Thread(target=MyThread1, args=[LThreadData(1)])
-t2 = threading.Thread(target=MyThread1, args=[LThreadData(2)])
+#t2 = threading.Thread(target=MyThread1, args=[LThreadData(2)])
 t3 = threading.Thread(target=MyThread2, args=[LThreadData(3)])
 t1.start()
-t2.start()
+#t2.start()
 t3.start()
