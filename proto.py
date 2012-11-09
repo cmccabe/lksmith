@@ -13,29 +13,20 @@ class LMutex(object):
         self.before = dict()
         self.after = dict()
     def lock(self, tls):
-        after_copy = dict()
-        self.selfmutex.acquire()
-        for l in self.after.keys():
-            after_copy[l] = 1
-        self.selfmutex.release()
-        add_to_before = dict()
-
         for l in tls.held.keys():
-            if (after_copy.has_key(l)):
+            l.selfmutex.acquire()
+            l.after[self] = 1
+            l.selfmutex.release()
+        self.selfmutex.acquire()
+        for l in tls.held.keys():
+            if (self.after.has_key(l)):
                 print "lock order inversion! " + str(l),
                 print " is supposed to be taken before " + str(self),
                 print "."
-            else:
-                add_to_before[l] = 1
-                l.selfmutex.acquire()
-                l.after[self] = 1
-                l.selfmutex.release()
-        self.selfmutex.acquire()
-        for l in add_to_before.keys():
             self.before[l] = 1
+        tls.held[self] = 1
         self.selfmutex.release()
         self.mutex.acquire()
-        tls.held[self] = 1
         tls.print_held_locks()
     def unlock(self, tls):
         del tls.held[self]
