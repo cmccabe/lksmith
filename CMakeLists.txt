@@ -44,10 +44,20 @@ CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/config.h.cmake ${CMAKE_BINARY_DIR}/config.h)
 # Set up include paths
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_BINARY_DIR}
 )
 
 macro(add_utest utest)
     add_test(${utest} ${CMAKE_CURRENT_BINARY_DIR}/${utest} ${utest})
 endmacro(add_utest)
 
-add_subdirectory(util)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+    set(PLATFORM_SRC, "linux_platform.c")
+else()
+    set(PLATFORM_SRC, "posix_platform.c")
+endif()
+
+add_library(lksmith
+    lksmith.c
+    ${PLATFORM_SRC}
+)

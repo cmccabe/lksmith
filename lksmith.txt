@@ -80,3 +80,5 @@ thread 2 owns C.
 He tries to lock A.
 thread 2 checks to see if C is in the "before" set of A.  It is, so a warning is
 issued.
+
+ok, so... how to mutate the after set / 
