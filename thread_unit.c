@@ -27,19 +27,48 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "platform.h"
+#include "lksmith.h"
+#include "test.h"
 
-#include <inttypes.h>
+#include <errno.h>
+#include <stdint.h>
 #include <stdio.h>
-#include <sys/syscall.h>
+#include <stdlib.h>
+#include <string.h>
 
-extern pid_t gettid(void);
-
-void platform_create_thread_name(char * __restrict out, size_t out_len)
+static void die_on_error(int code __attribute__((unused)),
+		const char *msg __attribute__((unused)))
 {
-	/* On Linux, we can call gettid() to get the kernel's ID number for
-	 * this thread.  This is preferrable to making up our own number, since
-	 * other debugging tools can also examine the kernel thread ID. */
-	pid_t tid = (pid_t)syscall(SYS_gettid);
-	snprintf(out, out_len, "thread %"PRId64, (uint64_t)tid);
+	abort();
+}
+
+static int test_thread_name_set_and_get_impl(void)
+{
+	const char * const MY_THREAD = "my_thread";
+	const char *name;
+
+	EXPECT_ZERO(lksmith_set_thread_name(MY_THREAD));
+	name = lksmith_get_thread_name();
+	EXPECT_NOT_EQ(name, NULL);
+	EXPECT_ZERO(strcmp(MY_THREAD, name));
+	return 0;
+}
+
+static void* test_thread_name_set_and_get(void *v __attribute__((unused)))
+{
+	return (void*)(uintptr_t)test_thread_name_set_and_get_impl();
+}
+
+int main(void)
+{
+	pthread_t pthread;
+	void *rval;
+
+	lksmith_set_error_cb(die_on_error);
+	EXPECT_ZERO(pthread_create(&pthread, NULL,
+		test_thread_name_set_and_get, NULL));
+	EXPECT_ZERO(pthread_join(pthread, &rval));
+	EXPECT_EQ(rval, 0); 
+
+	return EXIT_SUCCESS;
 }

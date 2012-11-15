@@ -1095,7 +1095,7 @@ int lksmith_spin_unlock (struct lksmith_spin *spin)
 	return ldata_unlock(spin->info.data, tls);
 }
 
-void lksmith_set_thread_name(const char *const name)
+int lksmith_set_thread_name(const char *const name)
 {
 	struct lksmith_tls *tls = get_or_create_tls();
 
@@ -1103,6 +1103,21 @@ void lksmith_set_thread_name(const char *const name)
 		lksmith_print_error(ENOMEM,
 			"lksmith_set_thread_name(thread=%s): failed "
 			"to allocate thread-local storage.", name);
+		return ENOMEM;
 	}
 	snprintf(tls->name, LKSMITH_THREAD_NAME_MAX, "%s", name);
+	return 0;
+}
+
+const char* lksmith_get_thread_name(void)
+{
+	struct lksmith_tls *tls = get_or_create_tls();
+
+	if (!tls) {
+		lksmith_print_error(ENOMEM,
+			"lksmith_get_thread_name(): failed "
+			"to allocate thread-local storage.");
+		return NULL;
+	}
+	return tls->name;
 }

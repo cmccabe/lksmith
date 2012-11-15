@@ -52,12 +52,19 @@ macro(add_utest utest)
 endmacro(add_utest)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    set(PLATFORM_SRC, "linux_platform.c")
+    add_library(lksmith
+        lksmith.c
+        linux_platform.c
+    )
 else()
-    set(PLATFORM_SRC, "posix_platform.c")
+    add_library(lksmith
+        lksmith.c
+        posix_platform.c
+    )
 endif()
 
-add_library(lksmith
-    lksmith.c
-    ${PLATFORM_SRC}
-)
+target_link_libraries(lksmith pthread)
+
+add_executable(thread_unit thread_unit.c)
+target_link_libraries(thread_unit lksmith)
+add_utest(thread_unit)

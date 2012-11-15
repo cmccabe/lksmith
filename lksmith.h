@@ -269,8 +269,19 @@ int lksmith_mutex_unlock(struct lksmith_mutex *__mutex) __nonnull ((1));
  *			This string will be deep-copied.
  *			The copy will be truncated to LKSMITH_THREAD_NAME_MAX
  *			bytes long, including the terminating null.
+ *
+ * @return		0 on success; error code otherwise
  */
-void lksmith_set_thread_name(const char * const name);
+int lksmith_set_thread_name(const char * const name);
+
+/**
+ * Get the thread name.
+ *
+ * @return		The thread name.  This is allocated as a thread-local
+ *			string.  Returns NULL if we failed to allocate
+ *			thread-local data.
+ */
+const char* lksmith_get_thread_name(void);
 
 #ifdef __cplusplus
 }
