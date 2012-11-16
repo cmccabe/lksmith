@@ -536,6 +536,7 @@ static void lksmith_release_lid(lid_t lid)
 		sizeof(struct lksmith_lock_info*) * (--g_lock_info_len));
 	if (new_lock_info || (g_lock_info_len == 0))
 		g_lock_info = new_lock_info;
+	//printf("g_lock_info_len = %d\n", g_lock_info_len);
 }
 
 /**

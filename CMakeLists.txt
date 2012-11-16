@@ -68,3 +68,7 @@ target_link_libraries(lksmith pthread)
 add_executable(thread_unit thread_unit.c)
 target_link_libraries(thread_unit lksmith)
 add_utest(thread_unit)
+
+add_executable(lock_unit lock_unit.c)
+target_link_libraries(lock_unit lksmith)
+add_utest(lock_unit)
