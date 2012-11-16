@@ -62,9 +62,35 @@ static int test_mutex_lock_simple(void)
 {
 	struct lksmith_mutex mutex;
 	EXPECT_ZERO(lksmith_mutex_init("simple_mutex_1", &mutex, NULL));
+	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
 	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
 	return 0;
 }
+
+static int test_mutex_lock_simple_static(void)
+{
+	struct lksmith_mutex mutex = LKSMITH_MUTEX_INITIALIZER;
+	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	return 0;
+}
+
+static int test_spin_lock_simple(void)
+{
+	struct lksmith_mutex mutex;
+	EXPECT_ZERO(lksmith_mutex_init("simple_mutex_1", &mutex, NULL));
+	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	return 0;
+}
+
 
 int main(void)
 {
@@ -75,6 +101,9 @@ int main(void)
 	EXPECT_ZERO(test_mutex_static_init_teardown());
 	EXPECT_ZERO(test_mutex_init_teardown());
 	EXPECT_ZERO(test_spin_init_teardown());
+	EXPECT_ZERO(test_mutex_lock_simple());
+	EXPECT_ZERO(test_mutex_lock_simple_static());
+	EXPECT_ZERO(test_spin_lock_simple());
 
 	return EXIT_SUCCESS;
 }
