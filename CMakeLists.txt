@@ -29,7 +29,7 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_GNU_SOURCE")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -z nodelete")
 
 set(CMAKE_C_FLAGS_RELEASE "-O3 -Wuninitialized")
-set(CMAKE_C_FLAGS_DEBUG "-g -O2 -fstack-protector -rdynamic")
+set(CMAKE_C_FLAGS_DEBUG "-g -O0 -fstack-protector -rdynamic")
 set(CMAKE_CURRENT_BINARY_DIR, builds)
 SET(CMAKE_INSTALL_PREFIX /usr/local)
 
