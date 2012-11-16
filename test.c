@@ -27,9 +27,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <errno.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/time.h>
 
 void die_on_error(int code, const char *msg)
 {
@@ -109,4 +112,27 @@ void *xcalloc(size_t s)
 		abort();
 	}
 	return p;
+}
+
+int get_current_timespec(struct timespec *ts)
+{
+	struct timeval tv;
+
+	if (gettimeofday(&tv, NULL))
+		return errno;
+	ts->tv_nsec = tv.tv_usec * 1000;
+	ts->tv_sec = tv.tv_sec;
+	return 0;
+}
+
+void timespec_add_milli(struct timespec *ts, unsigned int ms)
+{
+	uint64_t nsec = ts->tv_nsec;
+	nsec += (ms * 1000);
+	if (nsec > 1000000000) {
+		ts->tv_sec++;
+		ts->tv_nsec = nsec - 1000000000;
+	} else {
+		ts->tv_nsec = nsec;
+	}
 }

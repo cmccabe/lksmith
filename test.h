@@ -72,6 +72,23 @@ int find_recorded_error(int expect);
  */
 void *xcalloc(size_t s);
 
+/**
+ * Get the current time
+ *
+ * @param ts		(out param) the current time
+ *
+ * @return		0 on success; gettimeofday errno otherwise
+ */
+int get_current_timespec(struct timespec *ts);
+
+/**
+ * Increment a timespec by a few milliseconds
+ *
+ * @param ts		(out param) the timespec
+ * @param ms		The number of milliseconds to add
+ */
+void timespec_add_milli(struct timespec *ts, unsigned int ms);
+
 #define EXPECT_ZERO(x) \
 	do { \
 		int __my_ret__ = x; \

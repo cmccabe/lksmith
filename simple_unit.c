@@ -61,10 +61,18 @@ static int test_spin_init_teardown(void)
 static int test_mutex_lock_simple(void)
 {
 	struct lksmith_mutex mutex;
+	struct timespec ts;
+
 	EXPECT_ZERO(lksmith_mutex_init("simple_mutex_1", &mutex, NULL));
 	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
 	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
 	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_trylock(&mutex));
+	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
+	EXPECT_ZERO(get_current_timespec(&ts));
+	timespec_add_milli(&ts, 50);
+	EXPECT_ZERO(lksmith_mutex_timedlock(&mutex, &ts));
 	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
 	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
 	return 0;
