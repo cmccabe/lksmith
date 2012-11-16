@@ -99,3 +99,14 @@ int find_recorded_error(int expect)
 	return found;
 }
 
+void *xcalloc(size_t s)
+{
+	void *p;
+	
+	p = calloc(1, s);
+	if (!p) {
+		fprintf(stderr, "out of memory allocating %zd bytes.\n", s);
+		abort();
+	}
+	return p;
+}
