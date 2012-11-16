@@ -524,7 +524,9 @@ static void lksmith_release_lid(lid_t lid)
 {
 	struct lksmith_lock_info **new_lock_info;
 
-	if (g_lock_info_len >= lid)
+	//printf("removing %d; g_lock_info_len = %d\n", lid, g_lock_info_len);
+
+	if (g_lock_info_len <= lid)
 		return;
 	else if (g_lock_info_len < (lid + 1)) {
 		g_lock_info[lid] = NULL;
