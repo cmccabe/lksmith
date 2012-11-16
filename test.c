@@ -28,11 +28,12 @@
  */
 
 #include <pthread.h>
+#include <stdio.h>
 #include <stdlib.h>
 
-void die_on_error(int code __attribute__((unused)),
-		const char *msg __attribute__((unused)))
+void die_on_error(int code, const char *msg)
 {
+	fprintf(stderr, "die_on_error: got error %d: %s\n", code, msg);
 	abort();
 }
 
