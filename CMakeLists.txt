@@ -65,10 +65,10 @@ endif()
 
 target_link_libraries(lksmith pthread)
 
-add_executable(thread_unit thread_unit.c)
+add_executable(thread_unit test.c thread_unit.c)
 target_link_libraries(thread_unit lksmith)
 add_utest(thread_unit)
 
-add_executable(lock_unit lock_unit.c)
-target_link_libraries(lock_unit lksmith)
-add_utest(lock_unit)
+add_executable(simple_unit test.c simple_unit.c)
+target_link_libraries(simple_unit lksmith)
+add_utest(simple_unit)

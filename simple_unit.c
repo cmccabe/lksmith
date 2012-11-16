@@ -34,35 +34,47 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
-static int test_thread_name_set_and_get_impl(void)
+static int test_mutex_init_teardown(void)
 {
-	const char * const MY_THREAD = "my_thread";
-	const char *name;
-
-	EXPECT_ZERO(lksmith_set_thread_name(MY_THREAD));
-	name = lksmith_get_thread_name();
-	EXPECT_NOT_EQ(name, NULL);
-	EXPECT_ZERO(strcmp(MY_THREAD, name));
+	struct lksmith_mutex mutex;
+	EXPECT_ZERO(lksmith_mutex_init("test_mutex_1", &mutex, NULL));
+	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
 	return 0;
 }
 
-static void* test_thread_name_set_and_get(void *v __attribute__((unused)))
+static int test_mutex_static_init_teardown(void)
 {
-	return (void*)(uintptr_t)test_thread_name_set_and_get_impl();
+	struct lksmith_mutex mutex = LKSMITH_MUTEX_INITIALIZER;
+	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	return 0;
+}
+
+static int test_spin_init_teardown(void)
+{
+	struct lksmith_spin spin;
+	EXPECT_ZERO(lksmith_spin_init("test_spin_1", &spin, 0));
+	EXPECT_ZERO(lksmith_spin_destroy(&spin));
+	return 0;
+}
+
+static int test_mutex_lock_simple(void)
+{
+	struct lksmith_mutex mutex;
+	EXPECT_ZERO(lksmith_mutex_init("simple_mutex_1", &mutex, NULL));
+	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	return 0;
 }
 
 int main(void)
 {
-	pthread_t pthread;
-	void *rval;
-
 	lksmith_set_error_cb(die_on_error);
-	EXPECT_ZERO(pthread_create(&pthread, NULL,
-		test_thread_name_set_and_get, NULL));
-	EXPECT_ZERO(pthread_join(pthread, &rval));
-	EXPECT_EQ(rval, 0); 
+
+	EXPECT_EQ(LKSMITH_API_VERSION, lksmith_get_version());
+	EXPECT_ZERO(test_mutex_init_teardown());
+	EXPECT_ZERO(test_mutex_static_init_teardown());
+	EXPECT_ZERO(test_mutex_init_teardown());
+	EXPECT_ZERO(test_spin_init_teardown());
 
 	return EXIT_SUCCESS;
 }

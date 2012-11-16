@@ -32,6 +32,36 @@
 
 #include <stdio.h> /* for fprintf */
 
+/**
+ * Error handling function that just aborts.
+ *
+ * @param code		The error code
+ * @param msg		The error message
+ */
+void die_on_error(int code, const char *msg);
+
+/**
+ * Error handling function that records errors.
+ *
+ * @param code		The error code
+ * @param msg		The error message
+ */
+void record_error(int code, const char *msg);
+
+/**
+ * Clear all errors recorded by record_error.
+ */
+void clear_recorded_errors(void);
+
+/**
+ * Find a recorded error code and clear it.
+ *
+ * @param expect	The error code to search for.
+ *
+ * @return		0 if the error code was not found; 1 if it was.
+ */
+int find_recorded_error(int expect);
+
 #define EXPECT_ZERO(x) \
 	do { \
 		int __my_ret__ = x; \

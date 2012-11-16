@@ -27,13 +27,14 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "lksmith.h"
-#include "test.h"
-
-#include <errno.h>
-#include <stdint.h>
-#include <stdio.h>
+#include <pthread.h>
 #include <stdlib.h>
+
+void die_on_error(int code __attribute__((unused)),
+		const char *msg __attribute__((unused)))
+{
+	abort();
+}
 
 struct recorded_error {
 	int code;
@@ -44,7 +45,7 @@ static struct recorded_error *g_recorded_errors;
 
 static pthread_mutex_t g_recorded_errors_lock = PTHREAD_MUTEX_INITIALIZER;
 
-static void record_error(int code, const char *msg __attribute__((unused)))
+void record_error(int code, const char *msg __attribute__((unused)))
 {
 	struct recorded_error *rec;
 
@@ -58,7 +59,7 @@ static void record_error(int code, const char *msg __attribute__((unused)))
 	pthread_mutex_unlock(&g_recorded_errors_lock);
 }
 
-static void clear_recorded_errors(void)
+void clear_recorded_errors(void)
 {
 	struct recorded_error *rec, *next;
 
@@ -74,7 +75,7 @@ static void clear_recorded_errors(void)
 	pthread_mutex_unlock(&g_recorded_errors_lock);
 }
 
-static int find_recorded_error(int expect)
+int find_recorded_error(int expect)
 {
 	int found = 0;
 	struct recorded_error **rec, *cur;
@@ -97,29 +98,3 @@ static int find_recorded_error(int expect)
 	return found;
 }
 
-static int test_mutex_init_teardown(void)
-{
-	struct lksmith_mutex mutex;
-	EXPECT_ZERO(lksmith_mutex_init("test_mutex_1", &mutex, NULL));
-	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
-	return 0;
-}
-
-static int test_spin_init_teardown(void)
-{
-	struct lksmith_spin spin;
-	EXPECT_ZERO(lksmith_spin_init("test_spin_1", &spin, 0));
-	EXPECT_ZERO(lksmith_spin_destroy(&spin));
-	return 0;
-}
-
-int main(void)
-{
-	lksmith_set_error_cb(record_error);
-
-	EXPECT_ZERO(test_mutex_init_teardown());
-	EXPECT_ZERO(test_mutex_init_teardown());
-	//EXPECT_ZERO(test_spin_init_teardown());
-
-	return EXIT_SUCCESS;
-}

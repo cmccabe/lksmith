@@ -99,7 +99,7 @@ struct lksmith_spin {
  * Similar to PTHREAD_MUTEX_INITIALIZER, this can be used to initialize a mutex
  * as part of the mutex declaration.
  */
-#define LKSMITH_MUTEX_INITIALIZER(name) \
+#define LKSMITH_MUTEX_INITIALIZER \
 	{ PTHREAD_MUTEX_INITIALIZER, { PTHREAD_MUTEX_INITIALIZER, 0 } } 
 
 /******************************************************************

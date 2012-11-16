@@ -677,30 +677,19 @@ error:
 	return ret;
 }
 
-static void linfo_destroy(struct lksmith_lock_info *__restrict info)
+static int ldata_destroy(struct lksmith_lock_data *ldata,
+		struct lksmith_tls *tls)
 {
-	int ret;
 	lid_t lid;
 	struct lksmith_lock_info *ainfo;
-	struct lksmith_lock_data *ldata;
-	struct lksmith_tls *tls;
 
-	ldata = info->data;
-	tls = get_or_create_tls();
-	if (!tls) {
-		lksmith_print_error(ENOMEM,
-			"linfo_destroy(lock=%s): "
-			"failed to allocate thread-local storage.",
-			ldata->name);
-		return;
-	}
 	if (tls_contains_lid(tls, ldata->lid)) {
 		lksmith_print_error(EINVAL,
 			"linfo_destroy(thread=%s, lock=%s): tried to "
 			"destroy a lock that this thread currently holds.  "
 			"Destroying a lock that is currently held causes "
 			"undefined behavior.", tls->name, ldata->name);
-		return;
+		return EINVAL;
 	}
 	// All references to this lock should be gone.
 	// The only exception is if a thread is still holding this mutex
@@ -727,12 +716,34 @@ static void linfo_destroy(struct lksmith_lock_info *__restrict info)
 		ldata_remove_before(ainfo->data, lid);
 	}
 	// Remove this lock from the global list.
-	lksmith_release_lid(info->data->lid);
+	lksmith_release_lid(ldata->lid);
 	pthread_mutex_unlock(&g_lock_info_lock);
 
 	// Finally, let's destroy the internal data structures.
 	free(ldata->before);
 	free(ldata->after);
+	free(ldata);
+	return 0;
+}
+
+static void linfo_destroy(struct lksmith_lock_info *__restrict info)
+{
+	int ret;
+	struct lksmith_lock_data *ldata;
+	struct lksmith_tls *tls;
+
+	ldata = info->data;
+	tls = get_or_create_tls();
+	if (!tls) {
+		lksmith_print_error(ENOMEM, "linfo_destroy(lock=%s): "
+			"failed to allocate thread-local storage.",
+			(ldata ? ldata->name : "(none)"));
+		return;
+	}
+	if (ldata) {
+		if (ldata_destroy(ldata, tls))
+			return;
+	}
 	ret = pthread_mutex_destroy(&info->lock);
 	if (ret) {
 		lksmith_print_error(ret, "linfo_destroy(lock=%s): "
