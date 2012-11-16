@@ -310,14 +310,14 @@ static int tls_remove_lid(struct lksmith_tls *tls, lid_t lid)
 	signed int i;
 	lid_t *held;
 
-	for (i = tls->num_held - 1; i > 0; i--) {
+	for (i = tls->num_held - 1; i >= 0; i--) {
 		if (tls->held[i] == lid)
 			break;
 	}
 	if (i < 0)
 		return ENOENT;
-	memmove(&tls->held[i - 1], &tls->held[i], 
-		sizeof(lid_t) * (tls->num_held - i));
+	memmove(&tls->held[i], &tls->held[i + 1],
+		sizeof(lid_t) * (tls->num_held - i - 1));
 	held = realloc(tls->held, sizeof(lid_t) * (--tls->num_held));
 	if (held || (tls->num_held == 0)) {
 		tls->held = held;
@@ -970,7 +970,7 @@ int ldata_lock(struct lksmith_lock_info *info, struct lksmith_tls *tls)
 		} else if (ret == ENOMEM) {
 			lksmith_print_error(ret, "ldata_lock(%s): "
 				"out of memory.", ldata->name);
-		} else {
+		} else if (ret) {
 			lksmith_print_error(ret, "ldata_lock(%s): "
 				"unknown error %d.", ldata->name, ret);
 		}

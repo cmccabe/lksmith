@@ -35,15 +35,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-static int test_mutex_lock_simple(void)
+static int test_multi_mutex_lock(signed int max_locks)
 {
-	struct lksmith_mutex mutex;
-	EXPECT_ZERO(lksmith_mutex_init("simple_mutex_1", &mutex, NULL));
-	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	signed int i;
+	struct lksmith_mutex *mutex;
+	static char name[LKSMITH_LOCK_NAME_MAX];
+
+	mutex = xcalloc(sizeof(struct lksmith_mutex) * max_locks);
+	for (i = 0; i < max_locks; i++) {
+		snprintf(name, sizeof(name), "test_multi_%04d", i);
+		EXPECT_ZERO(lksmith_mutex_init(name, &mutex[i], NULL));
+	}
+	for (i = 0; i < max_locks; i++) {
+		EXPECT_ZERO(lksmith_mutex_lock(&mutex[i]));
+	}
+	for (i = max_locks - 1; i >= 0; i--) {
+		EXPECT_ZERO(lksmith_mutex_unlock(&mutex[i]));
+	}
 	return 0;
 }
 
@@ -51,7 +59,8 @@ int main(void)
 {
 	lksmith_set_error_cb(die_on_error);
 
-	EXPECT_ZERO(test_mutex_lock_simple());
+	EXPECT_ZERO(test_multi_mutex_lock(5));
+	EXPECT_ZERO(test_multi_mutex_lock(100));
 
 	return EXIT_SUCCESS;
 }
