@@ -939,7 +939,7 @@ int ldata_lock(struct lksmith_lock_info *info, struct lksmith_tls *tls)
 	pthread_mutex_lock(&info->lock);
 	for (i = 0; i < tls->num_held; i++) {
 		ret = ldata_add_before(ldata, tls->held[i]);
-		if (!ret) {
+		if (ret) {
 			lksmith_print_error(ret, "ldata_lock("
 				"lock=%s, thread=%s): error adding lid "
 				"%d to the before set: error %d: %s.",
