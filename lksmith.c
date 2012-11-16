@@ -123,6 +123,7 @@ static pthread_mutex_t g_lock_info_lock = PTHREAD_MUTEX_INITIALIZER;
  *****************************************************************/
 static struct lksmith_lock_info* lksmith_lookup_info_unlocked(lid_t lid);
 static struct lksmith_lock_info* lksmith_lookup_info(lid_t lid);
+static void lksmith_unlock_info(struct lksmith_lock_info *info);
 
 /******************************************************************
  *  Error handling
@@ -380,6 +381,8 @@ static int compare_lid(const void * __restrict va, const void * __restrict vb)
  */
 static int ldata_in_before(struct lksmith_lock_data *ldata, lid_t aid)
 {
+	if (ldata->before == NULL)
+		return 0;
 	return !!bsearch(&aid, ldata->before, ldata->before_size, sizeof(lid_t),
 		compare_lid);
 }
@@ -428,12 +431,16 @@ static void ldata_remove_sorted(lid_t * __restrict * __restrict arr,
 	int i;
 	lid_t *narr;
 
+	if (*arr == NULL)
+		return;
 	for (i = 0; i < *num; i++) {
 		if ((*arr)[i] == lid)
 			break;
 		else if ((*arr)[i] > lid)
 			return;
 	}
+	if (i == *num)
+		return;
 	memmove(&(*arr)[i - 1], &(*arr)[i], sizeof(lid_t) * (*num - i - 1));
 	narr = realloc(*arr, sizeof(lid_t) * (--*num));
 	if (narr || (*num == 0))
@@ -524,11 +531,9 @@ static void lksmith_release_lid(lid_t lid)
 {
 	struct lksmith_lock_info **new_lock_info;
 
-	//printf("removing %d; g_lock_info_len = %d\n", lid, g_lock_info_len);
-
 	if (g_lock_info_len <= lid)
 		return;
-	else if (g_lock_info_len < (lid + 1)) {
+	else if ((lid + 1) < g_lock_info_len) {
 		g_lock_info[lid] = NULL;
 		return;
 	}
@@ -536,7 +541,6 @@ static void lksmith_release_lid(lid_t lid)
 		sizeof(struct lksmith_lock_info*) * (--g_lock_info_len));
 	if (new_lock_info || (g_lock_info_len == 0))
 		g_lock_info = new_lock_info;
-	//printf("g_lock_info_len = %d\n", g_lock_info_len);
 }
 
 /**
@@ -714,6 +718,7 @@ static int ldata_destroy(struct lksmith_lock_data *ldata,
 			continue;
 		ldata_remove_after(ainfo->data, lid);
 		ldata_remove_before(ainfo->data, lid);
+		lksmith_unlock_info(ainfo);
 	}
 	// Remove this lock from the global list.
 	lksmith_release_lid(ldata->lid);
@@ -743,6 +748,7 @@ static void linfo_destroy(struct lksmith_lock_info *__restrict info)
 	if (ldata) {
 		if (ldata_destroy(ldata, tls))
 			return;
+		info->data = NULL;
 	}
 	ret = pthread_mutex_destroy(&info->lock);
 	if (ret) {
@@ -794,6 +800,8 @@ static struct lksmith_lock_info* lksmith_lookup_info_unlocked(lid_t lid)
 	if (lid >= g_lock_info_len)
 		return NULL;
 	info = g_lock_info[lid];
+	if (!info)
+		return NULL;
 	pthread_mutex_lock(&info->lock);
 	return info;
 }
@@ -1007,9 +1015,6 @@ static int lksmith_mutex_lock_internal(struct lksmith_mutex *mutex,
 			(mutex->info.data ? mutex->info.data->name : "(none)"));
 		return ENOMEM;
 	}
-	ret = ldata_lock(&mutex->info, tls);
-	if (ret)
-		return ret;
 	if (trylock) {
 		ret = pthread_mutex_trylock(&mutex->raw);
 	} else if (ts) {
@@ -1017,8 +1022,9 @@ static int lksmith_mutex_lock_internal(struct lksmith_mutex *mutex,
 	} else {
 		ret = pthread_mutex_lock(&mutex->raw);
 	}
+	ret = ldata_lock(&mutex->info, tls);
 	if (ret) {
-		ldata_unlock(mutex->info.data, tls);
+		pthread_mutex_unlock(&mutex->raw);
 		return ret;
 	}
 	return 0;
