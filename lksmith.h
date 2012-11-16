@@ -177,6 +177,16 @@ int lksmith_mutex_init (const char * __restrict name,
 	__nonnull ((1, 2));
 
 /**
+ * Destroy a mutex.
+ *
+ * @param __mutex	The mutex to destroy.
+ *
+ * @return		0 on success; error code otherwise.
+ */
+int lksmith_mutex_destroy(struct lksmith_mutex *__mutex)
+	__nonnull ((1));
+
+/**
  * Initializes a Locksmith-protected spin lock.
  *
  * This function is thread-safe.
@@ -195,14 +205,13 @@ int lksmith_spin_init(const char * __restrict name,
 		struct lksmith_spin *spin, int pshared);
 
 /**
- * Destroy a mutex.
+ * Destroy a spin lock.
  *
- * @param __mutex	The mutex to destroy.
+ * @param __mutex	The spin lock to destroy.
  *
  * @return		0 on success; error code otherwise.
  */
-int lksmith_mutex_destroy(struct lksmith_mutex *__mutex)
-	__nonnull ((1));
+int lksmith_spin_destroy(struct lksmith_spin *spin) __nonnull ((1));
 
 /**
  * Lock a mutex.
