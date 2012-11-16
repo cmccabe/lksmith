@@ -27,6 +27,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* get the POSIX strerror_r */
+#undef _GNU_SOURCE
+#define _XOPEN_SOURCE 600
+#include <string.h>
+#define _GNU_SOURCE
+#undef _XOPEN_SOURCE
+
 #include "config.h"
 #include "lksmith.h"
 #include "platform.h"
@@ -167,10 +174,20 @@ static void lksmith_print_error(int err, const char *fmt, ...)
  */
 static const char *terror(int err)
 {
+#ifdef HAVE_IMPROVED_TLS
+	static __thread char buf[4096];
+	int ret;
+
+	ret = strerror_r(err, buf, sizeof(buf));
+	if (ret)
+		return "unknown error";
+	return buf;
+#else
 	if ((err < 0) || (err >= sys_nerr)) {
 		return "unknown error";
 	}
 	return sys_errlist[err];
+#endif
 }
 
 /******************************************************************
