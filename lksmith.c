@@ -55,19 +55,22 @@ typedef uint32_t lid_t;
 #define MAX_LOCK_ID	0xfffffffeLU
 
 struct lksmith_lock_data {
-	/** The name of this lock. */
+	/** The name of this lock.  Read-only. */
 	char name[LKSMITH_LOCK_NAME_MAX];
-	/** The number of times this mutex has been locked. */
+	/** The number of times this mutex has been locked.  Protected by
+	 * info->lock. */
 	uint64_t nlock;
-	/** lksmith-assigned ID. */
+	/** lksmith-assigned ID.  Read-only. */
 	lid_t lid;
-	/** Size of the before list. */
+	/** Size of the before list.  Protected by info->lock. */
 	int before_size;
-	/** Sorted list of locks that have been taken before this lock. */
+	/** Sorted list of locks that have been taken before this lock.
+	 * Protected by info->lock. */
 	lid_t *before;
-	/** Size of the after list. */
+	/** Size of the after list.  Protected by info->lock. */
 	int after_size;
-	/** Sorted list of locks that have been taken after this lock. */
+	/** Sorted list of locks that have been taken after this lock.
+	 * Protected by info->lock. */
 	lid_t *after;
 };
 
@@ -85,11 +88,12 @@ struct lksmith_tls {
  *****************************************************************/
 /**
  * The key that allows us to retrieve thread-local data.
+ * Protected by g_tls_lock.
  */
 static pthread_key_t g_tls_key;
 
 /**
- * Nonzero if we have already initialized g_tls_key.
+ * Nonzero if we have already initialized g_tls_key.  Protected by g_tls_lock.
  */
 static int g_tls_key_init;
 
@@ -99,7 +103,7 @@ static int g_tls_key_init;
 static pthread_mutex_t g_tls_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /**
- * Locksmith error callback to use.  Protected by g_internal_lock.
+ * Locksmith error callback to use.  Protected by g_error_cb_lock.
  */
 static lksmith_error_cb_t g_error_cb = lksmith_error_cb_to_stderr;
 
@@ -111,17 +115,18 @@ static pthread_mutex_t g_error_cb_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /**
  * Array of locksmith_lock_data structures.
- * Indexed by lock data id.  Protected by g_internal_lock.
+ * Indexed by lock data id.  Protected by g_lock_info_lock.
  */
 static struct lksmith_lock_info **g_lock_info;
 
 /**
- * Length of g_lock_info.  Protected by g_internal_lock.
+ * Length of g_lock_info.  Protected by g_lock_info_lock.
  */
 static lid_t g_lock_info_len;
 
 /**
  * Protects internal Locksmith data structures.
+ * This lock must be taken before any info->lock.
  */
 static pthread_mutex_t g_lock_info_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -466,6 +471,7 @@ static void ldata_remove_sorted(lid_t * __restrict * __restrict arr,
 
 /**
  * Add a lock to the 'after' set of this lock data.
+ * Note: you must call this function with the info->lock held.
  *
  * @param ldata		The lock data.
  * @param lid		The lock ID to add.
@@ -474,11 +480,14 @@ static void ldata_remove_sorted(lid_t * __restrict * __restrict arr,
  */
 static int ldata_add_after(struct lksmith_lock_data *ldata, lid_t lid)
 {
+	printf("adding lid %d to the after set for "
+	       "ldata->lid %d\n", lid, ldata->lid);
 	return ldata_add_sorted(&ldata->after, &ldata->after_size, lid);
 }
 
 /**
  * Add a lock to the 'before' set of this lock data.
+ * Note: you must call this function with the info->lock held.
  *
  * @param ldata		The lock data.
  * @param lid		The lock ID to add.
@@ -487,11 +496,14 @@ static int ldata_add_after(struct lksmith_lock_data *ldata, lid_t lid)
  */
 static int ldata_add_before(struct lksmith_lock_data *ldata, lid_t lid)
 {
+	printf("adding lid %d to the before set for "
+	       "ldata->lid %d\n", lid, ldata->lid);
 	return ldata_add_sorted(&ldata->before, &ldata->before_size, lid);
 }
 
 /**
  * Remove a lock from the 'before' set of this lock data.
+ * Note: you must call this function with the info->lock held.
  *
  * @param ldata		The lock data.
  * @param lid		The lock ID to remove.
@@ -503,6 +515,7 @@ static void ldata_remove_after(struct lksmith_lock_data *ldata, lid_t lid)
 
 /**
  * Remove a lock from the 'after' set of this lock data.
+ * Note: you must call this function with the info->lock held.
  *
  * @param ldata		The lock data.
  * @param lid		The lock ID to remove.
@@ -514,7 +527,6 @@ static void ldata_remove_before(struct lksmith_lock_data *ldata, lid_t lid)
 
 /**
  * Scan the g_lock_info array for the next available lock ID.
- *
  * Note: you must call this function with the g_lock_info_lock held.
  *
  * @return		INVAL_LOCK_ID if a memory allocation failed; the new
