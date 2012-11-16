@@ -1083,6 +1083,7 @@ int lksmith_spin_trylock(struct lksmith_spin *spin)
 
 int lksmith_mutex_unlock(struct lksmith_mutex *mutex)
 {
+	int ret;
 	struct lksmith_tls *tls;
 
 	tls = get_or_create_tls();
@@ -1092,11 +1093,16 @@ int lksmith_mutex_unlock(struct lksmith_mutex *mutex)
 			"thread-local storage.", mutex->info.data->name);
 		return ENOMEM;
 	}
-	return ldata_unlock(mutex->info.data, tls);
+	ret = ldata_unlock(mutex->info.data, tls);
+	if (ret)
+		return ret;
+	ret = pthread_mutex_unlock(&mutex->raw);
+	return ret;
 }
 
 int lksmith_spin_unlock (struct lksmith_spin *spin)
 {
+	int ret;
 	struct lksmith_tls *tls;
 
 	tls = get_or_create_tls();
@@ -1106,7 +1112,11 @@ int lksmith_spin_unlock (struct lksmith_spin *spin)
 			"thread-local storage.", spin->info.data->name);
 		return ENOMEM;
 	}
-	return ldata_unlock(spin->info.data, tls);
+	ret = ldata_unlock(spin->info.data, tls);
+	if (ret)
+		return ret;
+	ret = pthread_spin_unlock(&spin->raw);
+	return ret;
 }
 
 int lksmith_set_thread_name(const char *const name)
