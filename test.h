@@ -32,6 +32,8 @@
 
 #include <stdio.h> /* for fprintf */
 
+struct timespec;
+
 /**
  * Error handling function that just aborts.
  *
