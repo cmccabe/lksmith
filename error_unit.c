@@ -70,7 +70,9 @@ static int inver_thread_b(void)
 {
 	EXPECT_ZERO(sem_wait(&g_inver_sem1));
 	EXPECT_ZERO(lksmith_mutex_lock(&g_lock2));
+	printf("doing the prelock that SHOULD generate an error...\n");
 	EXPECT_EQ(lksmith_mutex_trylock(&g_lock1), EBUSY);
+	printf("=====================\n");
 	EXPECT_ZERO(sem_post(&g_inver_sem2));
 	EXPECT_ZERO(lksmith_mutex_unlock(&g_lock2));
 	return 0;

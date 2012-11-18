@@ -55,11 +55,13 @@ if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     add_library(lksmith
         lksmith.c
         linux_platform.c
+        util.c
     )
 else()
     add_library(lksmith
         lksmith.c
         posix_platform.c
+        util.c
     )
 endif()
 

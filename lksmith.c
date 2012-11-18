@@ -36,9 +36,11 @@
 
 #include "config.h"
 #include "lksmith.h"
+#include "util.h"
 #include "platform.h"
 
 #include <errno.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -316,6 +318,13 @@ static int tls_append_lid(struct lksmith_tls *tls, lid_t lid)
 		return ENOMEM;
 	tls->held = held;
 	held[tls->num_held++] = lid;
+
+	unsigned int i;
+	printf("%s: tls_append_lid: you are now holding ", tls->name);
+	for (i = 0; i < tls->num_held; i++) {
+		printf("%d ", tls->held[i]);
+	}
+	printf("\n");
 	return 0;
 }
 
@@ -410,6 +419,22 @@ static int ldata_in_before(struct lksmith_lock_data *ldata, lid_t aid)
 }
 
 /**
+ * Discover if a lock is in the after set of another lock.
+ *
+ * @param ldata		The lock data.
+ * @param aid		The lock ID to check.
+ *
+ * @return		0 if the lock is not in the set; 1 if it is.
+ */
+static int ldata_in_after(struct lksmith_lock_data *ldata, lid_t aid)
+{
+	if (ldata->after == NULL)
+		return 0;
+	return !!bsearch(&aid, ldata->after, ldata->after_size, sizeof(lid_t),
+		compare_lid);
+}
+
+/**
  * Add an element to a sorted array, if it's not already there.
  *
  * @param arr		(inout) the array
@@ -436,6 +461,7 @@ static int ldata_add_sorted(lid_t * __restrict * __restrict arr,
 	*arr = narr;
 	memmove(&narr[i + 1], &narr[i], sizeof(lid_t) * (*num - i));
 	narr[i] = lid;
+	*num = *num + 1;
 	return 0;
 }
 
@@ -526,6 +552,39 @@ static void ldata_remove_before(struct lksmith_lock_data *ldata, lid_t lid)
 }
 
 /**
+ * Dump out the contents of a lock data structure.
+ * Note: you must call this function with the info->lock held.
+ *
+ * @param ldata		The lock data
+ * @param buf		(out param) the buffer to write to
+ * @param buf_len	length of buf
+ */
+static void ldata_dump(const struct lksmith_lock_data *ldata,
+		char *buf, size_t buf_len)
+{
+	int i;
+	size_t off = 0;
+	const char *prefix = "";
+
+	fwdprintf(buf, &off, buf_len, "ldata{name=%s, "
+		  "nlock=%"PRId64", lid=%d, before={",
+		  ldata->name, ldata->nlock, ldata->lid);
+	for (i = 0; i < ldata->before_size; i++) {
+		fwdprintf(buf, &off, buf_len, "%s%d",
+			  prefix, ldata->before[i]);
+		prefix = " ";
+	}
+	fwdprintf(buf, &off, buf_len, "}, after={");
+	prefix = "";
+	for (i = 0; i < ldata->after_size; i++) {
+		fwdprintf(buf, &off, buf_len, "%s%d",
+			  prefix, ldata->after[i]);
+		prefix = " ";
+	}
+	fwdprintf(buf, &off, buf_len, "}}");
+}
+
+/**
  * Scan the g_lock_info array for the next available lock ID.
  * Note: you must call this function with the g_lock_info_lock held.
  *
@@ -578,17 +637,18 @@ static void lksmith_release_lid(lid_t lid)
  * This does not allocate the memory for the info structure, or initialize the
  * mutex.  However, it initializes everything else.
  *
+ * Must be called with g_lock_info_lock held.
+ *
  * @param name		The name of the lock, or NULL to get the default.
  * @param info		The info to initialize.
  */
-int linfo_init(const char * __restrict name,
+int linfo_init_unlocked(const char * __restrict name,
 		struct lksmith_lock_info * __restrict info)
 {
 	struct lksmith_lock_data *ldata = NULL;
 	int ret;
 	lid_t lid = INVAL_LOCK_ID;
 
-	pthread_mutex_lock(&g_lock_info_lock);
 	lid = lksmith_alloc_lid();
 	if (lid == INVAL_LOCK_ID) {
 		ret = ENOMEM;
@@ -608,15 +668,27 @@ int linfo_init(const char * __restrict name,
 	}
 	info->data = ldata;
 	g_lock_info[lid] = info;
-	pthread_mutex_unlock(&g_lock_info_lock);
 	return 0;
 
 error:
 	if (lid != INVAL_LOCK_ID) {
 		lksmith_release_lid(lid);
 	}
-	pthread_mutex_unlock(&g_lock_info_lock);
 	free(ldata);
+	return ret;
+}
+
+/**
+ * See linfo_init_unlocked.
+ */
+int linfo_init(const char * __restrict name,
+		struct lksmith_lock_info * __restrict info)
+{
+	int ret;
+
+	pthread_mutex_lock(&g_lock_info_lock);
+	ret = linfo_init_unlocked(name, info);
+	pthread_mutex_unlock(&g_lock_info_lock);
 	return ret;
 }
 
@@ -892,6 +964,8 @@ static int lid_add_after(lid_t lid, lid_t aid)
 			"lid_add_after(%d): no lock found for this ID.", lid);
 		return EINVAL;
 	}
+	printf("checking to see if aid %d is in the before set for "
+	       "info->data->lid %d\n", aid, info->data->lid);
 	if (ldata_in_before(info->data, aid)) {
 		snprintf(name, sizeof(name), "%s", info->data->name);
 		lksmith_unlock_info(info);
@@ -939,58 +1013,79 @@ void lksmith_error_cb_to_stderr(int code, const char *__restrict msg)
 }
 
 /**
- * Take a lock, internally.
+ * Prepare to take a lock
  *
- * @param ldata		The lock to take.
+ * @param ldata		The lock to prepare to take.
  * @param tls		The thread-local data for this thread.
  *
  * @return		0 on success; error code otherwise.
  */
-int ldata_lock(struct lksmith_lock_info *info, struct lksmith_tls *tls)
+int ldata_prelock(struct lksmith_lock_info *info, struct lksmith_tls *tls)
 {
 	lid_t held;
 	unsigned int i;
-	int ret;
+	int ret = 0;
 	struct lksmith_lock_data *ldata;
 	char name[LKSMITH_LOCK_NAME_MAX];
 
+	pthread_mutex_lock(&info->lock);
 	if (!info->data) {
-		// In this case, the Locksmith mutex was initialized by
-		// LKSMITH_MUTEX_INITIALIZER.  This sets up 
-		// mutex->info->lock, but not mutex->info.data.
-		// So let's set it up here.
-		ret = linfo_init(NULL, info);
+		/* In this case, the Locksmith mutex was initialized by
+		 * LKSMITH_MUTEX_INITIALIZER.  This macro sets up 
+		 * mutex.info.lock, but not mutex.info.data.
+		 * So we have to set it up here.
+		 * The awkward thing is that we need g_lock_info_lock to
+		 * perform the initialization, and that lock must be taken
+		 * before all others.  That is why there is the release +
+		 * relock + retest code.
+		 */
+		pthread_mutex_unlock(&info->lock);
+		pthread_mutex_lock(&g_lock_info_lock);
+		pthread_mutex_lock(&info->lock);
+		if (!info->data) {
+			ret = linfo_init_unlocked(NULL, info);
+		}
+		pthread_mutex_unlock(&g_lock_info_lock);
 		if (ret)
 			return ret;
 	}
 	ldata = info->data;
-	/* Add this lock ID to the list of locks we're holding. */
-	ret = tls_append_lid(tls, ldata->lid);
-	if (ret) {
-		lksmith_print_error(ENOMEM,
-			"ldata_lock(lock=%s, thread=%s): failed to allocate "
-			"space to store another thread id.",
-			ldata->name, tls->name);
-		return ENOMEM;
+	{
+		char buf[4096];
+		ldata_dump(ldata, buf, sizeof(buf));
+		printf("%s\n", buf);
 	}
-	pthread_mutex_lock(&info->lock);
 	for (i = 0; i < tls->num_held; i++) {
+		if (tls->held[i] == ldata->lid)
+			continue;
+		printf("checking to see if %d is in the after set of %d\n",
+		       tls->held[i], ldata->lid);
+		if (ldata_in_after(ldata, tls->held[i])) {
+			lid_get_name(tls->held[i], name);
+			lksmith_unlock_info(info);
+			lksmith_print_error(EDEADLK, "ldata_prelock(lock=%s, "
+				"thread=%s): lock order inversion!  "
+				"%s is supposed to be taken after %s.",
+				ldata->name, tls->name, name, ldata->name);
+			continue;
+		}
 		ret = ldata_add_before(ldata, tls->held[i]);
 		if (ret) {
-			lksmith_print_error(ret, "ldata_lock("
+			lksmith_print_error(ret, "ldata_prelock("
 				"lock=%s, thread=%s): error adding lid "
 				"%d to the before set: error %d: %s.",
-				ldata->name, tls->name, tls->held[i], 
+				ldata->name, tls->name, tls->held[i],
 				ret, terror(ret));
 		}
 	}
-	ldata->nlock++;
 	pthread_mutex_unlock(&info->lock);
 
 	/* Add ldata->lid to the 'after' set of all the locks we're
 	 * currently holding.  Unlike in the previous loop, we don't hold
 	 * ldata->lock while doing this.  This is to avoid deadlocks while
 	 * taking the locks for the other lksmith_lock_data objects.
+	 * We don't need info->lock to access info->data->lid and
+	 * info->data->name.
 	 */
 	for (i = 0; i < tls->num_held; i++) {
 		held = tls->held[i];
@@ -1000,25 +1095,60 @@ int ldata_lock(struct lksmith_lock_info *info, struct lksmith_tls *tls)
 		if (ret == EDEADLK) {
 			lid_get_name(held, name);
 			lksmith_print_error(EDEADLK,
-				"ldata_lock(lock=%s, thread=%s): lock order "
-				"inversion.  This lock is supposed to be "
+				"ldata_prelock(lock=%s, thread=%s): lock order "
+				"inversion.  %s is supposed to be "
 				"taken before %s.",
-				ldata->name, tls->name, name);
+				ldata->name, tls->name, tls->name, name);
 		} else if (ret == ENOMEM) {
-			lksmith_print_error(ret, "ldata_lock(%s): "
-				"out of memory.", ldata->name);
+			lksmith_print_error(ret, "ldata_lock(lock=%s, "
+				"thread=%s): out of memory.",
+				ldata->name, tls->name);
 		} else if (ret) {
-			lksmith_print_error(ret, "ldata_lock(%s): "
-				"unknown error %d.", ldata->name, ret);
+			lksmith_print_error(ret, "ldata_lock(lock=%s, "
+				"thread=%s): error %d: %s.",
+				ldata->name, tls->name, ret, terror(ret));
 		}
 	}
 	return 0;
 }
 
-int ldata_unlock(struct lksmith_lock_data *ldata, struct lksmith_tls *tls)
+/**
+ * Perform post-lock housekeeping
+ *
+ * @param ldata		The lock to take.
+ * @param tls		The thread-local data for this thread.
+ *
+ * @return		0 on success; error code otherwise.
+ */
+static int ldata_postlock(struct lksmith_lock_info *info,
+			struct lksmith_tls *tls)
+{
+	struct lksmith_lock_data *ldata;
+	int ret;
+
+	/* Add this lock ID to the list of locks we're holding. */
+	ldata = info->data;
+	ret = tls_append_lid(tls, ldata->lid);
+	if (ret) {
+		lksmith_print_error(ENOMEM,
+			"ldata_lock(lock=%s, thread=%s): failed to allocate "
+			"space to store another thread id.",
+			ldata->name, tls->name);
+		return ENOMEM;
+	}
+	/* Increment the usage count for this lock. */
+	pthread_mutex_lock(&info->lock);
+	ldata->nlock++;
+	pthread_mutex_unlock(&info->lock);
+	return 0;
+}
+
+static int ldata_preunlock(struct lksmith_lock_data *ldata,
+			struct lksmith_tls *tls)
 {
 	int ret;
 
+	printf("%s: entering ldata_preunlock\n", tls->name);
 	ret = tls_remove_lid(tls, ldata->lid);
 	if (ret) {
 		lksmith_print_error(EINVAL,
@@ -1044,6 +1174,10 @@ static int lksmith_mutex_lock_internal(struct lksmith_mutex *mutex,
 			(mutex->info.data ? mutex->info.data->name : "(none)"));
 		return ENOMEM;
 	}
+	printf("%s: entering lksmith_mutex_lock_internal\n", tls->name);
+	ret = ldata_prelock(&mutex->info, tls);
+	if (ret)
+		return ret;
 	if (trylock) {
 		ret = pthread_mutex_trylock(&mutex->raw);
 	} else if (ts) {
@@ -1051,7 +1185,9 @@ static int lksmith_mutex_lock_internal(struct lksmith_mutex *mutex,
 	} else {
 		ret = pthread_mutex_lock(&mutex->raw);
 	}
-	ret = ldata_lock(&mutex->info, tls);
+	if (ret)
+		return ret;
+	ret = ldata_postlock(&mutex->info, tls);
 	if (ret) {
 		pthread_mutex_unlock(&mutex->raw);
 		return ret;
@@ -1089,7 +1225,7 @@ static int lksmith_spin_lock_internal(struct lksmith_spin *spin,
 			(spin->info.data ? spin->info.data->name : "(none)"));
 		return ENOMEM;
 	}
-	ret = ldata_lock(&spin->info, tls);
+	ret = ldata_prelock(&spin->info, tls);
 	if (ret)
 		return ret;
 	if (trylock) {
@@ -1097,8 +1233,11 @@ static int lksmith_spin_lock_internal(struct lksmith_spin *spin,
 	} else {
 		ret = pthread_spin_lock(&spin->raw);
 	}
+	if (ret)
+		return ret;
+	ret = ldata_postlock(&spin->info, tls);
 	if (ret) {
-		ldata_unlock(spin->info.data, tls);
+		pthread_spin_unlock(&spin->raw);
 		return ret;
 	}
 	return 0;
@@ -1128,7 +1267,7 @@ int lksmith_mutex_unlock(struct lksmith_mutex *mutex)
 			"thread-local storage.", mutex->info.data->name);
 		return ENOMEM;
 	}
-	ret = ldata_unlock(mutex->info.data, tls);
+	ret = ldata_preunlock(mutex->info.data, tls);
 	if (ret)
 		return ret;
 	ret = pthread_mutex_unlock(&mutex->raw);
@@ -1147,7 +1286,7 @@ int lksmith_spin_unlock (struct lksmith_spin *spin)
 			"thread-local storage.", spin->info.data->name);
 		return ENOMEM;
 	}
-	ret = ldata_unlock(spin->info.data, tls);
+	ret = ldata_preunlock(spin->info.data, tls);
 	if (ret)
 		return ret;
 	ret = pthread_spin_unlock(&spin->raw);

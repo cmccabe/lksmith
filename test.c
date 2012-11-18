@@ -53,6 +53,7 @@ void record_error(int code, const char *msg __attribute__((unused)))
 {
 	struct recorded_error *rec;
 
+	printf("recording error %d, %s\n", code, msg);
 	rec = calloc(1, sizeof(*rec));
 	if (!rec)
 		abort();
