@@ -34,7 +34,8 @@ Locksmith should be compatible with every library built on top of pthreads in C
 or C++.  This includes boost::mutex, KDE's QMutex, glib's Glib::Mutex, and so
 forth.  Locksmith has no problems with global constructors or destructors in
 C++.  Locksmith also works with mutexes that have been initialized statically
-with PTHREAD\_MUTEX\_INITIALIZER.
+with PTHREAD\_MUTEX\_INITIALIZER.  Finally, Locksmith handles pthreads mutexes
+created and used in a shared library independent of the main executable.
 
 What license is Locksmith under?
 -------------------------------------------------------------
@@ -46,11 +47,12 @@ TODO
 * warn about taking a sleeping lock when holding a spin lock
 * Support pthread rwlocks
 * Support pthread barriers
+* Add the ability to dump out debugging information about the state of all locks on command.
 * Support thread cancellation (?)
 * Support POSIX semaphores
-* Add the ability to dump out debugging information about the state of all locks on command.
 * Add a way to suppress deadlock warnings through the use of compile-time annotations.
 * Add the ability to name mutexes and threads through the use of compile-time annotations.
+* Better support for debugging cross-process mutexes and spin-locks (perhaps by putting Locksmith globals into a shared memory segment?)  This is tricky because cross-process locks won't have the same memory address in different processes.
 
 Contact information
 -------------------------------------------------------------

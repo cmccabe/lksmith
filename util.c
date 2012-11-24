@@ -27,11 +27,22 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* get the POSIX strerror_r */
+#undef _GNU_SOURCE
+#define _XOPEN_SOURCE 600
+#include <string.h>
+#define _GNU_SOURCE
+#undef _XOPEN_SOURCE
+
+#include "config.h"
 #include "util.h"
 
+#include <errno.h>
 #include <stdarg.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 void fwdprintf(char *buf, size_t *off, size_t buf_len, const char *fmt, ...)
@@ -50,4 +61,23 @@ void fwdprintf(char *buf, size_t *off, size_t buf_len, const char *fmt, ...)
 		*off = buf_len;
 	else
 		*off = o + res;
+}
+
+void simple_spin_lock(int *lock)
+{
+	struct timespec ts;
+
+	while (1) {
+		if (__sync_bool_compare_and_swap(lock, 0, 1)) {
+			return;
+		}
+		ts.tv_sec = 0;
+		ts.tv_nsec = 10000;
+		nanosleep(&ts, NULL);
+	}
+}
+
+void simple_spin_unlock(int *lock)
+{
+	__sync_bool_compare_and_swap(lock, 1, 0);
 }

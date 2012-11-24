@@ -30,7 +30,6 @@
 #ifndef LKSMITH_H
 #define LKSMITH_H
 
-#include <pthread.h> /* for pthread_mutex_t, etc. */
 #include <stdint.h> /* for uint32_t, etc. */
 #include <unistd.h> /* for size_t */
 
@@ -39,7 +38,7 @@ extern "C" {
 #endif
 
 /******************************************************************
- *  Locksmith version
+ *  Locksmith macros
  *****************************************************************/
 /** The current Locksmith version.
  *
@@ -51,45 +50,10 @@ extern "C" {
  */
 #define LKSMITH_API_VERSION 0x0001000
 
-/******************************************************************
- *  Locksmith data structures
- *****************************************************************/
-struct lksmith_lock_data;
-
-/**
- * Maximum length of a lock name, including the terminating NULL byte.
- */
-#define LKSMITH_LOCK_NAME_MAX 16
-
 /**
  * Maximum length of a thread name, including the terminating NULL byte.
  */
 #define LKSMITH_THREAD_NAME_MAX 16
-
-struct lksmith_lock_info {
-	/**
-	 * Lock which protects the data.
-	 */
-	pthread_mutex_t lock;
-	/**
-	 * Private lock data.
-	 */
-	struct lksmith_lock_data *data;
-};
-
-struct lksmith_mutex {
-	/** The raw pthread lock. */
-	pthread_mutex_t raw;
-	/** lksmith data. */
-	struct lksmith_lock_info info;
-};
-
-struct lksmith_spin {
-	/** The raw spinlock. */
-	pthread_spinlock_t raw;
-	/** lksmith data. */
-	struct lksmith_lock_info info;
-};
 
 /******************************************************************
  *  Locksmith initializers
@@ -126,150 +90,64 @@ uint32_t lksmith_get_version(void);
 int lksmith_verion_to_str(uint32_t ver, char *str, size_t str_len);
 
 /**
- * The type signature for a Locksmith error reporting callback.
+ * Initialize a locksmith lock.  This function is optional.
  *
- * For obvious reasons, functions used as error reporting callbacks should not
- * take Locksmith-managed mutexes.
+ * @param ptr		pointer to the lock to initialize
  *
- * @param code		The numeric Locksmith error code (see LKSMITH_ERROR_).
- * @param msg		The human-readable error string.
+ * @return		0 on success; error code otherwise
  */
-typedef void (*lksmith_error_cb_t)(int code, const char * __restrict msg);
+int lksmith_optional_init(const void *ptr);
 
 /**
- * Set the callback that will be called to deliver errors or warnings.
- * This function is thread-safe.
+ * Destroy a lock.
  *
- * @param fn		The callback.  This callback will be invoked with no
- *			internal locksmith locks held.  This callback might be
- *			invoked concurrently from multiple different threads.
+ * @param ptr		pointer to the lock to destroy
+ *
+ * @return		0 if the lock was destroyed;
+ *			ENOENT if we're not aware of any such lock
  */
-void lksmith_set_error_cb(lksmith_error_cb_t fn);
+int lksmith_destroy(const void *ptr);
 
 /**
- * A simple error callback which prints a message to stderr.
- * This is the default error callback.
- * This function is thread-safe.
+ * Destroy a lock.
  *
- * @param code		The numeric Locksmith error code to be printed.
- * @param msg		The human-readable error string to be printed.
+ * @param ptr		pointer to the lock to destroy
  */
-void lksmith_error_cb_to_stderr(int code, const char *__restrict msg);
+void lksmith_postdestroy(const void *ptr);
 
 /**
- * Initializes a Locksmith-protected mutex.
+ * Perform some error checking before taking a lock.
  *
- * This function is thread-safe.
+ * @param ptr		pointer to the lock
  *
- * @param name		If this field is NULL, we will give this mutex a name
- * 			based on its numeric ID.  Otherwise, we will deep-copy
- * 			up to LKSMITH_LOCK_NAME_MAX - 1 bytes from this string
- * 			for the lock name.
- * @param __mutex	The Locksmith mutex to initialize.
- * @param __mutexattr	Pthread mutex attributes, or NULL (man
- *			pthread_mutex_init for details.)
- *
- * @return		0 on success; error code otherwise.
+ * @return		0 if we should continue with the lock; error code
+ *			otherwise.  We may print an error even if 0 is
+ *			returned.
  */
-int lksmith_mutex_init (const char * __restrict name,
-		struct lksmith_mutex *__mutex,
-		__const pthread_mutexattr_t *__mutexattr)
-	__nonnull ((1, 2));
+int lksmith_prelock(const void *ptr);
 
 /**
- * Destroy a mutex.
+ * Take a lock.
  *
- * @param __mutex	The mutex to destroy.
- *
- * @return		0 on success; error code otherwise.
+ * @param ptr		pointer to the lock.
  */
-int lksmith_mutex_destroy(struct lksmith_mutex *__mutex)
-	__nonnull ((1));
+void lksmith_postlock(const void *ptr, int error);
 
 /**
- * Initializes a Locksmith-protected spin lock.
+ * Determine if it's safe to release a lock.
  *
- * This function is thread-safe.
- *
- * @param name		If this field is NULL, we will give this spin lock a
- *			name based on its numeric ID.  Otherwise, we will
- *			deep-copy up to LKSMITH_LOCK_NAME_MAX - 1 bytes from
- *			this string for the lock name.
- * @param spin		The Locksmith spin lock to initialize.
- * @param pshared	Whether the spin lock should be cross-process.
- *			man pthread_spin_init for details.
- *
- * @return		0 on success; error code otherwise.
- */
-int lksmith_spin_init(const char * __restrict name,
-		struct lksmith_spin *spin, int pshared);
-
-/**
- * Destroy a spin lock.
- *
- * @param __mutex	The spin lock to destroy.
- *
- * @return		0 on success; error code otherwise.
- */
-int lksmith_spin_destroy(struct lksmith_spin *spin) __nonnull ((1));
-
-/**
- * Lock a mutex.
- *
- * @param mut		Pointer to the lksmith mutex
+ * @param ptr		pointer to the lock.
  *
  * @return		0 on success, or the error code.
  */
-int lksmith_mutex_lock(struct lksmith_mutex *__mutex)
-	__nonnull ((1));
+int lksmith_preunlock(const void *ptr);
 
 /**
- * Try locking a mutex.
+ * Release a lock.
  *
- * @param mut		Pointer to the lksmith mutex
- *
- * @return		0 on success; the error code otherwise 
+ * @param ptr		pointer to the lock.
  */
-int lksmith_mutex_trylock(struct lksmith_mutex *__mutex)
-	__nonnull ((1));
-
-/**
- * Wait until lock becomes available, or specified time passes.
- *
- * @param __mutex	Pointer to the lksmith mutex
- *
- * @return		0 on success, or the error code.
- */
-int lksmith_mutex_timedlock(struct lksmith_mutex *__restrict __mutex,
-				    __const struct timespec *__restrict
-				    __abstime) __nonnull ((1, 2));
-
-/**
- * Lock a spin lock.
- *
- * @param spin		Pointer to the lksmith spin lock
- *
- * @return		0 on success, or the error code.
- */
-int lksmith_spin_lock(struct lksmith_spin *spin);
-
-/**
- * Try locking a spin lock.
- *
- * @param spin		Pointer to the lksmith spin lock.
- *
- * @return		0 on success; the error code otherwise 
- */
-int lksmith_spin_trylock(struct lksmith_spin *spin);
-
-/**
- * Unlock a mutex.
- *
- * @param __mutex	Pointer to the lksmith mutex
- *
- * @return		0 on success, or the error code.
- */
-int lksmith_mutex_unlock(struct lksmith_mutex *__mutex) __nonnull ((1));
+void lksmith_postunlock(const void *ptr);
 
 /**
  * Set the thread name.

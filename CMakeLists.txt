@@ -52,42 +52,38 @@ macro(add_utest utest)
 endmacro(add_utest)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    add_library(lksmith
-        lksmith.c
-        linux_platform.c
-        util.c
-    )
+    set(PLATFORM_FILE linux_platform.c)
 else()
-    add_library(lksmith
-        lksmith.c
-        posix_platform.c
-        util.c
-    )
+    set(PLATFORM_FILE posix_platform.c)
 endif()
 
-target_link_libraries(lksmith pthread)
-
-add_library(lksmith_shim SHARED
+add_library(lksmith SHARED
+    ${PLATFORM_FILE}
+    error.c
+    linux_platform.c
+    lksmith.c
     shim.c
+    util.c
 )
-target_link_libraries(lksmith_shim dl pthread)
+
+target_link_libraries(lksmith dl pthread)
 
 add_executable(thread_unit test.c thread_unit.c)
 target_link_libraries(thread_unit lksmith)
 add_utest(thread_unit)
 
-add_executable(simple_unit test.c simple_unit.c)
-target_link_libraries(simple_unit lksmith)
-add_utest(simple_unit)
-
-add_executable(lock_unit test.c lock_unit.c)
-target_link_libraries(lock_unit lksmith)
-add_utest(lock_unit)
-
-add_executable(shim_unit test.c shim_unit.c)
-target_link_libraries(shim_unit lksmith)
-add_utest(shim_unit)
-
-add_executable(error_unit test.c error_unit.c)
-target_link_libraries(error_unit lksmith)
-add_utest(error_unit)
+#add_executable(simple_unit test.c simple_unit.c)
+#target_link_libraries(simple_unit lksmith)
+#add_utest(simple_unit)
+#
+#add_executable(lock_unit test.c lock_unit.c)
+#target_link_libraries(lock_unit lksmith)
+#add_utest(lock_unit)
+#
+#add_executable(shim_unit test.c shim_unit.c)
+#target_link_libraries(shim_unit lksmith)
+#add_utest(shim_unit)
+#
+#add_executable(error_unit test.c error_unit.c)
+#target_link_libraries(error_unit lksmith)
+#add_utest(error_unit)

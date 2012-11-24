@@ -27,25 +27,29 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef LKSMITH_UTIL_H
-#define LKSMITH_UTIL_H
+#ifndef LKSMITH_ERROR_H
+#define LKSMITH_ERROR_H
 
-#include <unistd.h> /* for size_t */
-
-/** Write a formatted string to the next available position in a
- * fixed-length buffer
+/**
+ * Log a Locksmith error message.
  *
- * @param buf		the buffer
- * @param off		(inout) current offset in the buffer
- * @param max		length of the buffer
- * @param fmt		a printf-style format string
- * @param ...		format arguments
+ * @param err		The error code.
+ * @param fmt		printf-style erorr code.
+ * @param ...		printf-style arguments.
  */
-void fwdprintf(char *buf, size_t *off, size_t buf_len,
-	const char *fmt, ...) __attribute__((format(printf, 4, 5)));
+void lksmith_error(int err, const char *fmt, ...)
+	__attribute__((format(printf, 2, 3)));
 
-void simple_spin_lock(int *lock);
-
-void simple_spin_unlock(int *lock);
+/**
+ * Look up the error message associated with a POSIX error code.
+ *
+ * This function is thread-safe.
+ *
+ * @param err		The POSIX error code (should be non-negative)
+ *
+ * @return		The error message.  This is a statically allocated
+ *			string. 
+ */
+const char *terror(int err);
 
 #endif

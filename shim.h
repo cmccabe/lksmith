@@ -27,25 +27,49 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef LKSMITH_UTIL_H
-#define LKSMITH_UTIL_H
+#ifndef LKSMITH_SHIM_H
+#define LKSMITH_SHIM_H
 
-#include <unistd.h> /* for size_t */
+#include <pthread.h>
 
-/** Write a formatted string to the next available position in a
- * fixed-length buffer
- *
- * @param buf		the buffer
- * @param off		(inout) current offset in the buffer
- * @param max		length of the buffer
- * @param fmt		a printf-style format string
- * @param ...		format arguments
- */
-void fwdprintf(char *buf, size_t *off, size_t buf_len,
-	const char *fmt, ...) __attribute__((format(printf, 4, 5)));
+/******************************************************************
+ * The raw pthreads functions.
+ *****************************************************************/
+#ifndef LKSMITH_SHIM_C
+#define EXTERN extern
+#else
+#define EXTERN
+#endif
 
-void simple_spin_lock(int *lock);
+EXTERN int (*r_pthread_mutex_init)(pthread_mutex_t *mutex,
+	const pthread_mutexattr_t *attr);
 
-void simple_spin_unlock(int *lock);
+EXTERN int (*r_pthread_mutex_destroy)(pthread_mutex_t *mutex);
+
+EXTERN int (*r_pthread_mutex_trylock)(pthread_mutex_t *mutex);
+
+EXTERN int (*r_pthread_mutex_lock)(pthread_mutex_t *mutex);
+
+EXTERN int (*r_pthread_mutex_timedlock)(pthread_mutex_t *__restrict mutex,
+	__const struct timespec *__restrict ts);
+
+EXTERN int (*r_pthread_mutex_unlock)(pthread_mutex_t *__restrict mutex);
+
+EXTERN int (*r_pthread_spin_init)(pthread_spinlock_t *lock, int pshared);
+
+EXTERN int (*r_pthread_spin_destroy)(pthread_spinlock_t *lock);
+
+EXTERN int (*r_pthread_spin_lock)(pthread_spinlock_t *lock);
+
+EXTERN int (*r_pthread_spin_trylock)(pthread_spinlock_t *lock);
+
+EXTERN int (*r_pthread_spin_unlock)(pthread_spinlock_t *lock);
+
+/******************************************************************
+ * Functions
+ *****************************************************************/
+int lksmith_shim_init(void);
+
+void* get_dlsym_next(const char *fname);
 
 #endif

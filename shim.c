@@ -27,6 +27,14 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#define LKSMITH_SHIM_C
+
+#include "error.h"
+#include "lksmith.h"
+#include "util.h"
+#include "shim.h"
+
+#include <errno.h>
 #include <dlfcn.h>
 #include <pthread.h>
 #include <stdio.h>
@@ -36,7 +44,7 @@
  * Shim functions used to redirect pthreads calls to Locksmith.
  */
 
-static void* dlsym_next_or_die(const char *fname)
+void* get_dlsym_next(const char *fname)
 {
 	void *v;
 
@@ -53,7 +61,7 @@ static void* dlsym_next_or_die(const char *fname)
 		 */
 		fprintf(stderr, "locksmith shim error: dlsym error: %s\n",
 			dlerror());
-		abort();
+		return NULL;
 	}
 	/* Another problem with the dlsym interface is that technically, a
 	 * void* should never be cast to a function pointer, since the C
@@ -64,97 +72,251 @@ static void* dlsym_next_or_die(const char *fname)
 	return v;
 }
 
+/**
+ * A list of mutex types that are compatible with error checking mutexes.
+ * Note that recursive mutexes are NOT compatible.
+ */
+static const int g_compatible_with_errcheck[] = {
+#ifdef PTHREAD_MUTEX_TIMED_NP
+	PTHREAD_MUTEX_TIMED_NP,
+#endif
+#ifdef PTHREAD_MUTEX_ADAPTIVE_NP
+	PTHREAD_MUTEX_ADAPTIVE_NP,
+#endif
+#ifdef PTHREAD_MUTEX_FAST_NP
+	PTHREAD_MUTEX_FAST_NP,
+#endif
+	PTHREAD_MUTEX_NORMAL,
+	PTHREAD_MUTEX_DEFAULT
+};
 
-static int (*r_pthread_mutex_init)(pthread_mutex_t *mutex,
-	__const pthread_mutexattr_t *attr);
+#define NUM_COMPATIBLE_WITH_ERRCHECK (sizeof(g_compatible_with_errcheck) / \
+	sizeof(g_compatible_with_errcheck[0]))
 
-int pthread_mutex_init(pthread_mutex_t *mutex,
-	__const pthread_mutexattr_t *attr)
+static int pthread_mutex_init_errcheck(pthread_mutex_t *mutex)
 {
-	return r_pthread_mutex_init(mutex, attr);
+	int ret;
+	pthread_mutexattr_t attr;
+
+	ret = pthread_mutexattr_init(&attr);
+	if (ret) {
+		lksmith_error(ret, "pthread_mutexattr_init failed "
+			"with error code %d: %s\n", ret, terror(ret));
+		goto done;
+	}
+	ret = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+	if (ret) {
+		lksmith_error(ret, "pthread_mutexattr_settype failed "
+			"with error code %d: %s\n", ret, terror(ret));
+		goto done_free_mutexattr;
+	}
+	ret = r_pthread_mutex_init(mutex, &attr);
+	if (ret) {
+		lksmith_error(ret, "pthread_mutex_init failed "
+			"with error code %d: %s\n", ret, terror(ret));
+		goto done_free_mutexattr;
+	}
+done_free_mutexattr:
+	pthread_mutexattr_destroy(&attr);
+done:
+	return ret;
 }
 
-static int (*r_pthread_mutex_destroy)(pthread_mutex_t *mutex);
+static int is_compatible_with_errcheck(int ty)
+{
+	unsigned int i;
+
+	for (i = 0; i < NUM_COMPATIBLE_WITH_ERRCHECK; i++) {
+		if (ty == g_compatible_with_errcheck[i])
+			return 1;
+	}
+	return 0;
+}
+
+int pthread_mutex_init(pthread_mutex_t *mutex,
+	const pthread_mutexattr_t *attr_const)
+{
+	int ret, ty = 0;
+	pthread_mutexattr_t *attr = NULL;
+
+	/*
+	 * We have to cast away the const here, because the alternative,
+	 * copying the pthread_mutexattr_t, is not feasible.
+	 * pthread_mutexattr_t is an opaque type and no "copy" function is
+	 * provided by pthreads.  The set of accessor functions may vary by
+	 * platform, so we can't use those to perform a copy either.
+	 *
+	 * So, we're casting away the const here.  This should be safe in
+	 * all cases.  C/C++ compilers can't use const as an aide to
+	 * optimization (due to the aliasing problem.)
+	 * We also know that pthread_mutexattr_t is not stored in read-only
+	 * memory, because the only way to initialize it is through  
+	 * pthread_mutexattr_init, which modifies it.  There is no static
+	 * initializer provided for pthread_mutexattr_t.
+	 */
+	attr = (pthread_mutexattr_t *)attr_const;
+	if (!attr) {
+		/* No mutex attributes provided.  Initialize this as an error
+		 * checking mutex. */
+		return pthread_mutex_init_errcheck(mutex);
+	}
+	ret = pthread_mutexattr_gettype(attr, &ty);
+	if (ret == EINVAL) {
+		lksmith_error(ret, "pthread_mutexattr_gettype failed "
+			"with error code %d: %s\n", ret, terror(ret));
+		return ret;
+	}
+	if (is_compatible_with_errcheck(ty)) {
+		/* If the requested mutex type is compatible with the error
+		 * checking type, let's use that type instead, for extra
+		 * safety.
+		 */
+		ret = pthread_mutexattr_settype(attr,
+			PTHREAD_MUTEX_ERRORCHECK);
+		if (ret) {
+			lksmith_error(ret, "pthread_mutexattr_settype failed "
+				"with error code %d: %s\n", ret, terror(ret));
+			return ret;
+		}
+	}
+	ret = r_pthread_mutex_init(mutex, attr);
+	if (ret) {
+		lksmith_error(ret, "pthread_mutex_init failed "
+			"with error code %d: %s\n", ret, terror(ret));
+		return ret;
+	}
+	return ret;
+}
 
 int pthread_mutex_destroy(pthread_mutex_t *mutex)
 {
+	int ret;
+
+	ret = lksmith_destroy(mutex);
+	if ((ret != 0) && (ret != ENOENT)) {
+		/* We ignore ENOENT here because the mutex may have been
+		 * initialized with PTHREAD_MUTEX_INITIALIZER and then
+		 * destroyed after no interactions with Locksmith.
+		 *
+		 * In order to catch this case, we'd have to peek inside the
+		 * mutex, which we don't want to do for portability reasons.
+		 */
+		return ret;
+	}
 	return r_pthread_mutex_destroy(mutex);
 }
 
-static int (*r_pthread_mutex_trylock)(pthread_mutex_t *mutex);
-
 int pthread_mutex_trylock(pthread_mutex_t *mutex)
 {
-	return r_pthread_mutex_trylock(mutex);
+	int ret = lksmith_prelock(mutex);
+	if (ret)
+		return ret;
+	ret = r_pthread_mutex_trylock(mutex);
+	lksmith_postlock(mutex, ret);
+	return ret;
 }
-
-static int (*r_pthread_mutex_lock)(pthread_mutex_t *mutex);
 
 int pthread_mutex_lock(pthread_mutex_t *mutex)
 {
-	return r_pthread_mutex_lock(mutex);
+	int ret = lksmith_prelock(mutex);
+	if (ret)
+		return ret;
+	ret = r_pthread_mutex_lock(mutex);
+	lksmith_postlock(mutex, ret);
+	return ret;
 }
-
-static int (*r_pthread_mutex_timedlock)(pthread_mutex_t *__restrict mutex,
-	__const struct timespec *__restrict ts);
 
 int pthread_mutex_timedlock(pthread_mutex_t *__restrict mutex,
 		__const struct timespec *__restrict ts)
 {
-	return r_pthread_mutex_timedlock(mutex, ts);
+	int ret = lksmith_prelock(mutex);
+	if (ret)
+		return ret;
+	ret = r_pthread_mutex_timedlock(mutex, ts);
+	lksmith_postlock(mutex, ret);
+	return ret;
 }
-
-static int (*r_pthread_mutex_unlock)(pthread_mutex_t *__restrict mutex);
 
 int pthread_mutex_unlock(pthread_mutex_t *__restrict mutex)
 {
-	return r_pthread_mutex_unlock(mutex);
+	int ret = lksmith_preunlock(mutex);
+	if (ret)
+		return ret;
+	ret = r_pthread_mutex_unlock(mutex);
+	if (ret)
+		return ret;
+	lksmith_postunlock(mutex);
+	return 0;
 }
 
 // TODO: pthread_rwlock stuff
-
-static int (*r_pthread_spin_init)(pthread_spinlock_t *lock, int pshared);
-
 int pthread_spin_init(pthread_spinlock_t *lock, int pshared)
 {
-	return r_pthread_spin_init(lock, pshared);
-}
+	int ret;
 
-static int (*r_pthread_spin_destroy)(pthread_spinlock_t *lock);
+	ret = r_pthread_spin_init(lock, pshared);
+	if (ret)
+		return ret;
+	ret = lksmith_optional_init((const void*)lock);
+	if (ret) {
+		r_pthread_spin_destroy(lock);
+		return ret;
+	}
+	return 0;
+}
 
 int pthread_spin_destroy(pthread_spinlock_t *lock)
 {
+	int ret;
+
+	ret = lksmith_destroy((const void*)lock);
+	if (ret)
+		return ret;
 	return r_pthread_spin_destroy(lock);
 }
 
-static int (*r_pthread_spin_lock)(pthread_spinlock_t *lock);
-
 int pthread_spin_lock(pthread_spinlock_t *lock)
 {
-	return r_pthread_spin_lock(lock);
+	int ret = lksmith_prelock((const void*)lock);
+	if (ret)
+		return ret;
+	ret = r_pthread_spin_lock(lock);
+	lksmith_postlock((const void*)lock, ret);
+	return ret;
 }
-
-static int (*r_pthread_spin_trylock)(pthread_spinlock_t *lock);
 
 int pthread_spin_trylock(pthread_spinlock_t *lock)
 {
-	return r_pthread_spin_trylock(lock);
+	int ret = lksmith_prelock((const void*)lock);
+	if (ret)
+		return ret;
+	ret = r_pthread_spin_trylock(lock);
+	lksmith_postlock((const void*)lock, ret);
+	return ret;
 }
-
-static int (*r_pthread_spin_unlock)(pthread_spinlock_t *lock);
 
 int pthread_spin_unlock(pthread_spinlock_t *lock)
 {
-	return r_pthread_spin_unlock(lock);
+	int ret = lksmith_preunlock((const void*)lock);
+	if (ret)
+		return ret;
+	ret = r_pthread_spin_unlock(lock);
+	if (ret)
+		return ret;
+	lksmith_postunlock((const void*)lock);
+	return 0;
 }
 
 // TODO: support barriers
 
-#define LOAD_FUNC(fn) r_##fn = dlsym_next_or_die(#fn)
+#define LOAD_FUNC(fn) do { \
+	r_##fn = get_dlsym_next(#fn); \
+	if (!r_##fn) { \
+		return ELIBACC; \
+	} \
+} while (0);
 
-void lksmith_shim_init(void) __attribute__((constructor));
-
-void lksmith_shim_init(void)
+int lksmith_shim_init(void)
 {
 	LOAD_FUNC(pthread_mutex_init);
 	LOAD_FUNC(pthread_mutex_destroy);
@@ -167,6 +329,8 @@ void lksmith_shim_init(void)
 	LOAD_FUNC(pthread_spin_lock);
 	LOAD_FUNC(pthread_spin_trylock);
 	LOAD_FUNC(pthread_spin_unlock);
+
+	return 0;
 }
 
 // TODO: support thread cancellation?  ugh...

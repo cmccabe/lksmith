@@ -27,17 +27,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-/* get the POSIX strerror_r */
-#undef _GNU_SOURCE
-#define _XOPEN_SOURCE 600
-#include <string.h>
-#define _GNU_SOURCE
-#undef _XOPEN_SOURCE
-
 #include "config.h"
+#include "error.h"
 #include "lksmith.h"
-#include "util.h"
 #include "platform.h"
+#include "shim.h"
+#include "tree.h"
+#include "util.h"
 
 #include <errno.h>
 #include <inttypes.h>
@@ -51,29 +47,20 @@
 /******************************************************************
  *  Locksmith private data structures
  *****************************************************************/
-typedef uint32_t lid_t;
-
-#define INVAL_LOCK_ID	0xffffffffLU
-#define MAX_LOCK_ID	0xfffffffeLU
-
-struct lksmith_lock_data {
-	/** The name of this lock.  Read-only. */
-	char name[LKSMITH_LOCK_NAME_MAX];
-	/** The number of times this mutex has been locked.  Protected by
-	 * info->lock. */
+struct lksmith_lock {
+	RB_ENTRY(lksmith_lock) entry;
+	/** The lock pointer */
+	const void *ptr;
+	/** The number of times this mutex has been locked. */
 	uint64_t nlock;
-	/** lksmith-assigned ID.  Read-only. */
-	lid_t lid;
-	/** Size of the before list.  Protected by info->lock. */
+	/** The color that this node has been painted (used in traversal) */
+	uint64_t color;
+	/** Reference count for this lock */
+	int refcnt;
+	/** Size of the before list. */
 	int before_size;
-	/** Sorted list of locks that have been taken before this lock.
-	 * Protected by info->lock. */
-	lid_t *before;
-	/** Size of the after list.  Protected by info->lock. */
-	int after_size;
-	/** Sorted list of locks that have been taken after this lock.
-	 * Protected by info->lock. */
-	lid_t *after;
+	/** list of locks that have been taken before this lock */
+	struct lksmith_lock **before;
 };
 
 struct lksmith_tls {
@@ -81,120 +68,84 @@ struct lksmith_tls {
 	char name[LKSMITH_THREAD_NAME_MAX];
 	/** Size of the held list. */
 	unsigned int num_held;
-	/** List of locks held */
-	lid_t *held;
+	/** Unsorted list of locks held */
+	const void **held;
 };
+
+/******************************************************************
+ *  Locksmith prototypes
+ *****************************************************************/
+static int lksmith_lock_compare(const struct lksmith_lock *a, 
+		const struct lksmith_lock *b) __attribute__((const));
+RB_HEAD(lock_tree, lksmith_lock);
+RB_GENERATE(lock_tree, lksmith_lock, entry, lksmith_lock_compare);
+static void lksmith_tls_destroy(void *v);
+static void tree_print(void) __attribute__((unused));
 
 /******************************************************************
  *  Locksmith globals
  *****************************************************************/
 /**
+ * 1 if the library has been initialized.
+ */
+static int g_initialized;
+
+/**
+ * Protects the initialization state.
+ */
+static int g_init_state_lock;
+
+/**
  * The key that allows us to retrieve thread-local data.
- * Protected by g_tls_lock.
+ * Protected by g_init_state_lock.
  */
 static pthread_key_t g_tls_key;
 
 /**
- * Nonzero if we have already initialized g_tls_key.  Protected by g_tls_lock.
+ * Mutex which protects g_tree
  */
-static int g_tls_key_init;
+static pthread_mutex_t g_tree_lock;
 
 /**
- * Protects g_tls_key.
+ * Tree of mutexes sorted by pointer
  */
-static pthread_mutex_t g_tls_lock = PTHREAD_MUTEX_INITIALIZER;
+struct lock_tree g_tree;
 
 /**
- * Locksmith error callback to use.  Protected by g_error_cb_lock.
+ * The latest color that has been used in graph traversal
  */
-static lksmith_error_cb_t g_error_cb = lksmith_error_cb_to_stderr;
-
-/**
- * Protects g_error_cb.  This is not held while the callback is in progress,
- * though.
- */
-static pthread_mutex_t g_error_cb_lock = PTHREAD_MUTEX_INITIALIZER;
-
-/**
- * Array of locksmith_lock_data structures.
- * Indexed by lock data id.  Protected by g_lock_info_lock.
- */
-static struct lksmith_lock_info **g_lock_info;
-
-/**
- * Length of g_lock_info.  Protected by g_lock_info_lock.
- */
-static lid_t g_lock_info_len;
-
-/**
- * Protects internal Locksmith data structures.
- * This lock must be taken before any info->lock.
- */
-static pthread_mutex_t g_lock_info_lock = PTHREAD_MUTEX_INITIALIZER;
+static uint64_t g_color;
 
 /******************************************************************
- *  Prototypes
- *****************************************************************/
-static struct lksmith_lock_info* lksmith_lookup_info_unlocked(lid_t lid);
-static struct lksmith_lock_info* lksmith_lookup_info(lid_t lid);
-static void lksmith_unlock_info(struct lksmith_lock_info *info);
-
-/******************************************************************
- *  Error handling
+ *  Initialization
  *****************************************************************/
 /**
- * Log an error message using the global error callback.
- *
- * This function must be called without g_error_cb_lock held.
- *
- * @param err		The error code.
- * @param fmt		printf-style erorr code.
- * @param ...		printf-style arguments.
+ * Initialize the locksmith library.
  */
-static void lksmith_print_error(int err, const char *fmt, ...)
-	__attribute__((format(printf, 2, 3)));
-
-static void lksmith_print_error(int err, const char *fmt, ...)
+static void lksmith_init(void)
 {
-	va_list ap;
-	char buf[2048];
-	lksmith_error_cb_t error_cb;
-
-	va_start(ap, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, ap);
-	va_end(ap);
-	pthread_mutex_lock(&g_error_cb_lock);
-	error_cb = g_error_cb;
-	pthread_mutex_unlock(&g_error_cb_lock);
-	error_cb(err, buf);
-}
-
-/**
- * Look up the error message associated with a POSIX error code.
- *
- * This function is thread-safe.
- *
- * @param err		The POSIX error code (should be non-negative)
- *
- * @return		The error message.  This is a statically allocated
- *			string. 
- */
-static const char *terror(int err)
-{
-#ifdef HAVE_IMPROVED_TLS
-	static __thread char buf[4096];
 	int ret;
 
-	ret = strerror_r(err, buf, sizeof(buf));
-	if (ret)
-		return "unknown error";
-	return buf;
-#else
-	if ((err < 0) || (err >= sys_nerr)) {
-		return "unknown error";
+	ret = lksmith_shim_init();
+	if (ret) {
+		/* can't use lksmith_error before shim_init */
+		fprintf(stderr, "lksmith_init: lksmith_shim_init failed.  "
+			"Can't find the real pthreads functions.\n");
+		abort();
 	}
-	return sys_errlist[err];
-#endif
+	ret = pthread_key_create(&g_tls_key, lksmith_tls_destroy);
+	if (ret) {
+		lksmith_error(ret, "lksmith_init: pthread_key_create("
+			"g_tls_key) failed: error %d: %s\n", ret, terror(ret));
+		abort();
+	}
+	ret = r_pthread_mutex_init(&g_tree_lock, NULL);
+	if (ret) {
+		lksmith_error(ret, "lksmith_init: pthread_mutex_init "
+			"g_tree_lock) failed: error %d: %s\n", ret, terror(ret));
+		abort();
+	}
+	g_initialized = 1;
 }
 
 /******************************************************************
@@ -220,6 +171,13 @@ static void lksmith_tls_destroy(void *v)
  * The problem with POSIX thread-local storage is that in order to use it,
  * you must first initialize a 'key'.  But how do you initialize this key
  * prior to use?  There's no good way to do it.
+ *
+ * gcc provides the non-portable __attribute__((constructor)), which seems like
+ * it could be useful.  Unfortunately, the order in which these constructor
+ * functions are called between shared libraries is not defined.
+ * If another shared library defines some constructor functions which invoke
+ * pthreads functions, and it gets run before we initialize, it's game over.
+ * C++ global constructors have the same issues.
  *
  * We could force Locksmith users to call an init function before calling any
  * other Locksmith functions.  Then, this init function could initialize the
@@ -255,20 +213,11 @@ static struct lksmith_tls *get_or_create_tls(void)
 		return t_improved_tls;
 	}
 #endif
-	pthread_mutex_lock(&g_tls_lock);
-	if (!g_tls_key_init) {
-		ret = pthread_key_create(&g_tls_key, lksmith_tls_destroy);
-		if (ret == 0) {
-			g_tls_key_init = 1;
-		}
+	simple_spin_lock(&g_init_state_lock);
+	if (!g_initialized) {
+		lksmith_init();
 	}
-	pthread_mutex_unlock(&g_tls_lock);
-	if (ret != 0) {
-		lksmith_print_error(ENOMEM,
-			"get_or_create_tls(): pthread_key_create failed "
-			"with error code %d: %s", ret, terror(ret));
-		return NULL;
-	}
+	simple_spin_unlock(&g_init_state_lock);
 #ifndef HAVE_IMPROVED_TLS
 	tls = pthread_getspecific(g_tls_key);
 	if (tls) {
@@ -277,9 +226,9 @@ static struct lksmith_tls *get_or_create_tls(void)
 #endif
 	tls = calloc(1, sizeof(*tls));
 	if (!tls) {
-		lksmith_print_error(ENOMEM,
+		lksmith_error(ENOMEM,
 			"get_or_create_tls(): failed to allocate "
-			"memory for thread-local storage.");
+			"memory for thread-local storage.\n");
 		return NULL;
 	}
 	platform_create_thread_name(tls->name, LKSMITH_THREAD_NAME_MAX);
@@ -287,9 +236,9 @@ static struct lksmith_tls *get_or_create_tls(void)
 	if (ret) {
 		free(tls->held);
 		free(tls);
-		lksmith_print_error(ENOMEM,
+		lksmith_error(ENOMEM,
 			"get_or_create_tls(): pthread_setspecific "
-			"failed with error %d: %s", ret, terror(ret));
+			"failed with error %d: %s\n", ret, terror(ret));
 		return NULL;
 	}
 #ifdef HAVE_IMPROVED_TLS
@@ -305,24 +254,24 @@ static struct lksmith_tls *get_or_create_tls(void)
  * This is so that we can support recursive mutexes.
  *
  * @param tls		The thread-local data.
- * @param lid		the lock ID to add to the list.
+ * @param ptr		the lock to add to the list.
  *
  * @return		0 on success; ENOMEM if we ran out of memory.
  */
-static int tls_append_lid(struct lksmith_tls *tls, lid_t lid)
+static int tls_append_held(struct lksmith_tls *tls, const void *ptr)
 {
-	lid_t *held;
+	const void **held;
 
-	held = realloc(tls->held, sizeof(lid_t) * (tls->num_held + 1));
+	held = realloc(tls->held, sizeof(uintptr_t) * (tls->num_held + 1));
 	if (!held)
 		return ENOMEM;
 	tls->held = held;
-	held[tls->num_held++] = lid;
+	held[tls->num_held++] = ptr;
 
 	unsigned int i;
 	printf("%s: tls_append_lid: you are now holding ", tls->name);
 	for (i = 0; i < tls->num_held; i++) {
-		printf("%d ", tls->held[i]);
+		printf("%p", tls->held[i]);
 	}
 	printf("\n");
 	return 0;
@@ -332,25 +281,25 @@ static int tls_append_lid(struct lksmith_tls *tls, lid_t lid)
  * Remove a lock ID from the list of lock IDs we hold.
  *
  * @param tls		The thread-local data.
- * @param lid		the lock ID to add to the list.
+ * @param ptr		the lock ID to add to the list.
  *
  * @return		0 on success; ENOENT if we are not holding the
  *			lock ID.
  */
-static int tls_remove_lid(struct lksmith_tls *tls, lid_t lid)
+static int tls_remove_held(struct lksmith_tls *tls, const void *ptr)
 {
 	signed int i;
-	lid_t *held;
+	const void **held;
 
 	for (i = tls->num_held - 1; i >= 0; i--) {
-		if (tls->held[i] == lid)
+		if (tls->held[i] == ptr)
 			break;
 	}
 	if (i < 0)
 		return ENOENT;
 	memmove(&tls->held[i], &tls->held[i + 1],
-		sizeof(lid_t) * (tls->num_held - i - 1));
-	held = realloc(tls->held, sizeof(lid_t) * (--tls->num_held));
+		sizeof(struct lksmith_held*) * (tls->num_held - i - 1));
+	held = realloc(tls->held, sizeof(uintptr_t) * (--tls->num_held));
 	if (held || (tls->num_held == 0)) {
 		tls->held = held;
 	}
@@ -361,77 +310,35 @@ static int tls_remove_lid(struct lksmith_tls *tls, lid_t lid)
  * Determine if we are holding a lock.
  *
  * @param tls		The thread-local data.
- * @param lid		The lock ID to find.
+ * @param ptr		The lock ID to find.
  *
  * @return		1 if we hold the lock; 0 otherwise.
  */
-static int tls_contains_lid(struct lksmith_tls *tls, lid_t lid)
+static int tls_contains_lid(struct lksmith_tls *tls, const void *ptr)
 {
 	unsigned int i;
 
 	for (i = 0; i < tls->num_held; i++) {
-		if (tls->held[i] == lid)
+		if (tls->held[i] == ptr)
 			return 1;
 	}
 	return 0;
 }
 
 /******************************************************************
- *  Lock data functions
+ *  Lock functions
  *****************************************************************/
-/**
- * Compare one lock ID with another.
- *
- * @param a		Pointer to the first lock ID.
- * @param b		Pointer to the second lock ID.
- *
- * @return		-1 if *a < *b; 0 if *a == *b; 1 if *a > *b.
- */
-static int compare_lid(const void * __restrict a, const void * __restrict b)
-	__attribute__((const));
-
-static int compare_lid(const void * __restrict va, const void * __restrict vb)
+static int lksmith_lock_compare(const struct lksmith_lock *a,
+		const struct lksmith_lock *b)
 {
-	lid_t a = *(lid_t*)va;
-	lid_t b = *(lid_t*)vb;
-	if (a < b)
+	const void *pa = a->ptr;
+	const void *pb = b->ptr;
+	if (pa < pb)
 		return -1;
-	else if (a > b)
+	else if (pa > pb)
 		return 1;
 	else
 		return 0;
-}
-
-/**
- * Discover if a lock is in the before set of another lock.
- *
- * @param ldata		The lock data.
- * @param aid		The lock ID to check.
- *
- * @return		0 if the lock is not in the set; 1 if it is.
- */
-static int ldata_in_before(struct lksmith_lock_data *ldata, lid_t aid)
-{
-	if (ldata->before == NULL)
-		return 0;
-	return !!bsearch(&aid, ldata->before, ldata->before_size, sizeof(lid_t),
-		compare_lid);
-}
-
-/**
- * Discover if a lock is in the after set of another lock.
- *
- * @param ldata		The lock data.
- * @param aid		The lock ID to check.
- *
- * @return		0 if the lock is not in the set; 1 if it is.
- */
-static int ldata_in_after(struct lksmith_lock_data *ldata, lid_t aid)
-{
-	if (ldata->after == NULL)
-		return 0;
-	return !!bsearch(&aid, ldata->after, ldata->after_size, sizeof(lid_t),
-		compare_lid);
 }
 
 /**
@@ -443,24 +350,24 @@ static int ldata_in_after(struct lksmith_lock_data *ldata, lid_t aid)
  *
  * @return		0 on success; ENOMEM if we ran out of memory.
  */
-static int ldata_add_sorted(lid_t * __restrict * __restrict arr,
-			    int * __restrict num, lid_t lid)
+static int lk_add_sorted(struct lksmith_lock ** __restrict * __restrict arr,
+			int * __restrict num, struct lksmith_lock *lk)
 {
 	int i;
-	lid_t *narr;
+	struct lksmith_lock **narr;
 
 	for (i = 0; i < *num; i++) {
-		if ((*arr)[i] == lid)
+		if ((*arr)[i] == lk)
 			return 0;
-		else if ((*arr)[i] > lid)
+		else if ((*arr)[i] > lk)
 			break;
 	}
-	narr = realloc(*arr, sizeof(lid_t) * (*num + 1));
+	narr = realloc(*arr, sizeof(struct lksmith_lock*) * (*num + 1));
 	if (!narr)
 		return ENOMEM;
 	*arr = narr;
-	memmove(&narr[i + 1], &narr[i], sizeof(lid_t) * (*num - i));
-	narr[i] = lid;
+	memmove(&narr[i + 1], &narr[i], sizeof(uintptr_t) * (*num - i));
+	narr[i] = lk;
 	*num = *num + 1;
 	return 0;
 }
@@ -468,829 +375,359 @@ static int ldata_add_sorted(lid_t * __restrict * __restrict arr,
 /**
  * Remove an element from a sorted array.
  * We assume it appears only once in that array.
+ * TODO: be smarter here-- use bsearch
  *
  * @param arr		(inout) the array
  * @param num		(inout) the array length
  * @param lid		The lock ID to remove.
  */
-static void ldata_remove_sorted(lid_t * __restrict * __restrict arr,
-			int * __restrict num, lid_t lid)
+static void lk_remove_sorted(struct lksmith_lock ** __restrict * __restrict arr,
+			int * __restrict num, struct lksmith_lock *ak)
 {
 	int i;
-	lid_t *narr;
+	struct lksmith_lock **narr;
 
 	if (*arr == NULL)
 		return;
 	for (i = 0; i < *num; i++) {
-		if ((*arr)[i] == lid)
+		if ((*arr)[i] == ak)
 			break;
-		else if ((*arr)[i] > lid)
+		else if ((*arr)[i] > ak)
 			return;
 	}
 	if (i == *num)
 		return;
-	memmove(&(*arr)[i - 1], &(*arr)[i], sizeof(lid_t) * (*num - i - 1));
-	narr = realloc(*arr, sizeof(lid_t) * (--*num));
+	memmove(&(*arr)[i - 1], &(*arr)[i],
+		sizeof(struct lksmith_lock*) * (*num - i - 1));
+	narr = realloc(*arr, sizeof(struct lksmith_lock*) * (--*num));
 	if (narr || (*num == 0))
 		*arr = narr;
-}
-
-/**
- * Add a lock to the 'after' set of this lock data.
- * Note: you must call this function with the info->lock held.
- *
- * @param ldata		The lock data.
- * @param lid		The lock ID to add.
- *
- * @return		0 on success; ENOMEM if we ran out of memory.
- */
-static int ldata_add_after(struct lksmith_lock_data *ldata, lid_t lid)
-{
-	printf("adding lid %d to the after set for "
-	       "ldata->lid %d\n", lid, ldata->lid);
-	return ldata_add_sorted(&ldata->after, &ldata->after_size, lid);
 }
 
 /**
  * Add a lock to the 'before' set of this lock data.
  * Note: you must call this function with the info->lock held.
  *
- * @param ldata		The lock data.
+ * @param lk		The lock data.
  * @param lid		The lock ID to add.
  *
  * @return		0 on success; ENOMEM if we ran out of memory.
  */
-static int ldata_add_before(struct lksmith_lock_data *ldata, lid_t lid)
+static int lk_add_before(struct lksmith_lock *lk, struct lksmith_lock *ak)
 {
-	printf("adding lid %d to the before set for "
-	       "ldata->lid %d\n", lid, ldata->lid);
-	return ldata_add_sorted(&ldata->before, &ldata->before_size, lid);
-}
-
-/**
- * Remove a lock from the 'before' set of this lock data.
- * Note: you must call this function with the info->lock held.
- *
- * @param ldata		The lock data.
- * @param lid		The lock ID to remove.
- */
-static void ldata_remove_after(struct lksmith_lock_data *ldata, lid_t lid)
-{
-	ldata_remove_sorted(&ldata->after, &ldata->after_size, lid);
+	printf("adding %p to the before set for %p\n", ak, lk);
+	return lk_add_sorted(&lk->before, &lk->before_size, ak);
 }
 
 /**
  * Remove a lock from the 'after' set of this lock data.
  * Note: you must call this function with the info->lock held.
  *
- * @param ldata		The lock data.
+ * @param lk		The lock data.
  * @param lid		The lock ID to remove.
  */
-static void ldata_remove_before(struct lksmith_lock_data *ldata, lid_t lid)
+static void lk_remove_before(struct lksmith_lock *lk, struct lksmith_lock *ak)
 {
-	ldata_remove_sorted(&ldata->before, &ldata->before_size, lid);
+	lk_remove_sorted(&lk->before, &lk->before_size, ak);
 }
 
 /**
  * Dump out the contents of a lock data structure.
- * Note: you must call this function with the info->lock held.
  *
- * @param ldata		The lock data
+ * @param lk		The lock data
  * @param buf		(out param) the buffer to write to
+ * @param off		(inout param) current position in the buffer
  * @param buf_len	length of buf
  */
-static void ldata_dump(const struct lksmith_lock_data *ldata,
-		char *buf, size_t buf_len)
+static void lk_dump(const struct lksmith_lock *lk,
+		char *buf, size_t *off, size_t buf_len)
 {
 	int i;
-	size_t off = 0;
 	const char *prefix = "";
 
-	fwdprintf(buf, &off, buf_len, "ldata{name=%s, "
-		  "nlock=%"PRId64", lid=%d, before={",
-		  ldata->name, ldata->nlock, ldata->lid);
-	for (i = 0; i < ldata->before_size; i++) {
-		fwdprintf(buf, &off, buf_len, "%s%d",
-			  prefix, ldata->before[i]);
+	fwdprintf(buf, off, buf_len, "lk{ptr=%p "
+		  "nlock=%"PRId64", color=%"PRId64", refcnt=%d, "
+		  "before={", (void*)lk->ptr, lk->nlock, lk->color, lk->refcnt);
+	for (i = 0; i < lk->before_size; i++) {
+		fwdprintf(buf, off, buf_len, "%s%p",
+			  prefix, lk->before[i]);
 		prefix = " ";
 	}
-	fwdprintf(buf, &off, buf_len, "}, after={");
-	prefix = "";
-	for (i = 0; i < ldata->after_size; i++) {
-		fwdprintf(buf, &off, buf_len, "%s%d",
-			  prefix, ldata->after[i]);
-		prefix = " ";
-	}
-	fwdprintf(buf, &off, buf_len, "}}");
+	fwdprintf(buf, off, buf_len, "}}");
 }
 
-/**
- * Scan the g_lock_info array for the next available lock ID.
- * Note: you must call this function with the g_lock_info_lock held.
- *
- * @return		INVAL_LOCK_ID if a memory allocation failed; the new
- *			lock ID otherwise.
- */
-static lid_t lksmith_alloc_lid(void)
+static void tree_print(void)
 {
-	lid_t lid;
-	struct lksmith_lock_info **new_lock_info;
+	char buf[8196];
+	struct lksmith_lock *lk;
+	size_t off;
+	const char *prefix = "";
 
-	for (lid = 0; lid < g_lock_info_len; lid++) {
-		if (!g_lock_info[lid])
-			return lid;
+	fprintf(stderr, "g_lock_tree: {");
+	RB_FOREACH(lk, lock_tree, &g_tree) {
+		off = 0;
+		lk_dump(lk, buf, &off, sizeof(buf));
+		fprintf(stderr, "%s%s", prefix, buf);
+		prefix = ",\n";
 	}
-	if (g_lock_info_len == MAX_LOCK_ID)
-		return INVAL_LOCK_ID;
-	new_lock_info = realloc(g_lock_info,
-		sizeof(struct lksmith_lock_info*) * (g_lock_info_len + 1));
-	if (!new_lock_info)
-		return INVAL_LOCK_ID;
-	g_lock_info = new_lock_info;
-	return g_lock_info_len++;
+	fprintf(stderr, "\n}\n");
 }
 
-/**
- * Release a lock ID from the g_lock_info array.
- *
- * Note: you must call this function with the g_lock_info_lock held.
- */
-static void lksmith_release_lid(lid_t lid)
+static int lksmith_insert(const void *ptr, struct lksmith_lock **lk)
 {
-	struct lksmith_lock_info **new_lock_info;
-
-	if (g_lock_info_len <= lid)
-		return;
-	else if ((lid + 1) < g_lock_info_len) {
-		g_lock_info[lid] = NULL;
-		return;
+	struct lksmith_lock *ak, *bk;
+	ak = calloc(1, sizeof(*ak));
+	if (!ak) {
+		return ENOMEM;
 	}
-	new_lock_info = realloc(g_lock_info,
-		sizeof(struct lksmith_lock_info*) * (--g_lock_info_len));
-	if (new_lock_info || (g_lock_info_len == 0))
-		g_lock_info = new_lock_info;
-}
-
-/**
- * Initialize a lock info structure.
- *
- * This does not allocate the memory for the info structure, or initialize the
- * mutex.  However, it initializes everything else.
- *
- * Must be called with g_lock_info_lock held.
- *
- * @param name		The name of the lock, or NULL to get the default.
- * @param info		The info to initialize.
- */
-int linfo_init_unlocked(const char * __restrict name,
-		struct lksmith_lock_info * __restrict info)
-{
-	struct lksmith_lock_data *ldata = NULL;
-	int ret;
-	lid_t lid = INVAL_LOCK_ID;
-
-	lid = lksmith_alloc_lid();
-	if (lid == INVAL_LOCK_ID) {
-		ret = ENOMEM;
-		goto error;
+	ak->ptr = ptr;
+	bk = RB_INSERT(lock_tree, &g_tree, ak);
+	if (bk) {
+		free(ak);
+		return EEXIST;
 	}
-	ldata = calloc(1, sizeof(*ldata));
-	if (!ldata) {
-		ret = ENOMEM;
-		goto error;
-	}
-	ldata->lid = lid;
-	if (name) {
-		snprintf(ldata->name, LKSMITH_LOCK_NAME_MAX, "%s", name);
-	} else {
-		snprintf(ldata->name, LKSMITH_LOCK_NAME_MAX, "lock %d",
-			ldata->lid);
-	}
-	info->data = ldata;
-	g_lock_info[lid] = info;
+	*lk = ak;
 	return 0;
-
-error:
-	if (lid != INVAL_LOCK_ID) {
-		lksmith_release_lid(lid);
-	}
-	free(ldata);
-	return ret;
 }
 
-/**
- * See linfo_init_unlocked.
- */
-int linfo_init(const char * __restrict name,
-		struct lksmith_lock_info * __restrict info)
+static struct lksmith_lock *lksmith_find(const void *ptr)
 {
-	int ret;
-
-	pthread_mutex_lock(&g_lock_info_lock);
-	ret = linfo_init_unlocked(name, info);
-	pthread_mutex_unlock(&g_lock_info_lock);
-	return ret;
+	struct lksmith_lock exemplar;
+	memset(&exemplar, 0, sizeof(exemplar));
+	exemplar.ptr = ptr;
+	return RB_FIND(lock_tree, &g_tree, &exemplar);
 }
 
 /******************************************************************
  *  API functions
  *****************************************************************/
-int lksmith_mutex_init(const char * __restrict name,
-		struct lksmith_mutex *mutex,
-		__const pthread_mutexattr_t *attr)
+int lksmith_optional_init(const void *ptr)
 {
-	int ret;
-
-	ret = pthread_mutex_init(&mutex->info.lock, NULL);
-	if (ret) {
-		lksmith_print_error(ret,
-			"lksmith_mutex_init(lock=%s): pthread_mutex_init "
-			"of our internal lock failed with error code %d: "
-			"%s", (name ? name : "(none)"), ret, terror(ret));
-		goto error;
-	}
-	ret = pthread_mutex_init(&mutex->raw, attr);
-	if (ret) {
-		lksmith_print_error(ret,
-			"lksmith_mutex_init(%s): pthread_mutex_init failed "
-			"of the raw lock failed with error code %d: %s",
-			(name ? name : "(none)"), ret, terror(ret));
-		goto error_destroy_internal_mutex;
-	}
-	ret = linfo_init(name, &mutex->info);
-	if (ret) {
-		lksmith_print_error(ret,
-			"lksmith_mutex_init(lock=%s): linfo_init failed "
-			"with error code %d: %s", (name ? name : "(none)"),
-			ret, terror(ret));
-		goto error_destroy_mutex;
-	}
-	return 0;
-
-error_destroy_mutex:
-	pthread_mutex_destroy(&mutex->raw);
-error_destroy_internal_mutex:
-	pthread_mutex_destroy(&mutex->info.lock);
-error:
-	return ret;
-}
-
-int lksmith_spin_init(const char * __restrict name,
-		struct lksmith_spin *spin, int pshared)
-{
-	int ret;
-
-	if (pshared == PTHREAD_PROCESS_SHARED) {
-		ret = ENOTSUP;
-		lksmith_print_error(ret,
-			"lksmith_spin_init(lock=%s): Locksmith doesn't yet "
-			"support cross-process spin-locks.", 
-			(name ? name : "(none)"));
-		goto error;
-	}
-	ret = pthread_mutex_init(&spin->info.lock, NULL);
-	if (ret) {
-		lksmith_print_error(ret,
-			"lksmith_spin_init(lock=%s): pthread_mutex_init "
-			"of our internal lock failed with error code %d: "
-			"%s", (name ? name : "(none)"), ret, terror(ret));
-		goto error;
-	}
-	ret = pthread_spin_init(&spin->raw, pshared);
-	if (ret) {
-		lksmith_print_error(ret,
-			"lksmith_spin_init(%s): pthread_mutex_init failed "
-			"of the raw lock failed with error code %d: %s",
-			(name ? name : "(none)"), ret, terror(ret));
-		goto error_destroy_internal_mutex;
-	}
-	ret = linfo_init(name, &spin->info);
-	if (ret) {
-		lksmith_print_error(ret,
-			"lksmith_spin_init(lock=%s): linfo_init failed "
-			"with error code %d: %s", (name ? name : "(none)"),
-			ret, terror(ret));
-		goto error_destroy_spin;
-	}
-	return 0;
-
-error_destroy_spin:
-	pthread_spin_destroy(&spin->raw);
-error_destroy_internal_mutex:
-	pthread_mutex_destroy(&spin->info.lock);
-error:
-	return ret;
-}
-
-static int ldata_destroy(struct lksmith_lock_data *ldata,
-		struct lksmith_tls *tls)
-{
-	lid_t lid;
-	struct lksmith_lock_info *ainfo;
-
-	if (tls_contains_lid(tls, ldata->lid)) {
-		lksmith_print_error(EINVAL,
-			"linfo_destroy(thread=%s, lock=%s): tried to "
-			"destroy a lock that this thread currently holds.  "
-			"Destroying a lock that is currently held causes "
-			"undefined behavior.", tls->name, ldata->name);
-		return EINVAL;
-	}
-	// All references to this lock should be gone.
-	// The only exception is if a thread is still holding this mutex
-	// while it was destroyed.  This will probably lead to us spewing
-	// warnings, although that can't be guaranteed-- we do re-use IDs.
-	// TODO: investigate using unique 64-bit LIDs.  Probably would want to
-	// use the low 32 bits to represent the array position, just as now,
-	// and use the top 32 bits as an incrementing counter.  That would
-	// allow us to warn in the destroy-while-holding case without fail.
-
-	// Now let's get rid of all references to this lock ID in other locks.
-	// TODO: avoid holding g_lock_info_lock for so long?
-	// It's tricky since if we didn't hold the lock for this whole time,
-	// another thread could copy around the ID we're trying to destroy,
-	// and basically undo our work.
-	pthread_mutex_lock(&g_lock_info_lock);
-	for (lid = 0; lid < g_lock_info_len; lid++) {
-		if (lid == ldata->lid)
-			continue;
-		ainfo = lksmith_lookup_info_unlocked(lid);
-		if (!ainfo)
-			continue;
-		ldata_remove_after(ainfo->data, lid);
-		ldata_remove_before(ainfo->data, lid);
-		lksmith_unlock_info(ainfo);
-	}
-	// Remove this lock from the global list.
-	lksmith_release_lid(ldata->lid);
-	pthread_mutex_unlock(&g_lock_info_lock);
-
-	// Finally, let's destroy the internal data structures.
-	free(ldata->before);
-	free(ldata->after);
-	free(ldata);
-	return 0;
-}
-
-static void linfo_destroy(struct lksmith_lock_info *__restrict info)
-{
-	int ret;
-	struct lksmith_lock_data *ldata;
 	struct lksmith_tls *tls;
+	struct lksmith_lock *lk;
+	int ret;
 
-	ldata = info->data;
 	tls = get_or_create_tls();
 	if (!tls) {
-		lksmith_print_error(ENOMEM, "linfo_destroy(lock=%s): "
-			"failed to allocate thread-local storage.",
-			(ldata ? ldata->name : "(none)"));
-		return;
+		lksmith_error(ENOMEM, "lksmith_optional_init(lock=%p): "
+			"failed to allocate thread-local storage.\n", ptr);
+		return ENOMEM;
 	}
-	if (ldata) {
-		if (ldata_destroy(ldata, tls))
-			return;
-		info->data = NULL;
-	}
-	ret = pthread_mutex_destroy(&info->lock);
+	r_pthread_mutex_lock(&g_tree_lock);
+	ret = lksmith_insert(ptr, &lk);
+	r_pthread_mutex_unlock(&g_tree_lock);
 	if (ret) {
-		lksmith_print_error(ret, "linfo_destroy(lock=%s): "
-			"pthread_mutex_destroy of mutex->info->lock "
-			"returned error %d: %s",
-			info->data->name, ret, terror(ret));
-	}
-}
-
-int lksmith_mutex_destroy(struct lksmith_mutex *mutex)
-{
-	char name[LKSMITH_LOCK_NAME_MAX];
-	int ret;
-
-	snprintf(name, sizeof(name), "%s", mutex->info.data->name);
-	linfo_destroy(&mutex->info);
-	ret = pthread_mutex_destroy(&mutex->raw);
-	if (ret) {
-		lksmith_print_error(ret, "lksmith_mutex_destroy(lock=%s): "
-			"pthread_mutex_destroy of mutex->raw returned error "
-			"%d: %s", name, ret, terror(ret));
+		lksmith_error(ret, "lksmith_optional_init(lock=%p, "
+			"thread=%s): failed to allocate lock data: "
+			"error %d: %s\n", ptr, tls->name, ret, terror(ret));
 		return ret;
 	}
 	return 0;
 }
 
-int lksmith_spin_destroy(struct lksmith_spin *spin)
+int lksmith_destroy(const void *ptr)
 {
-	char name[LKSMITH_LOCK_NAME_MAX];
 	int ret;
+	struct lksmith_lock *lk, *ak;
+	struct lksmith_tls *tls;
 
-	snprintf(name, sizeof(name), "%s", spin->info.data->name);
-	linfo_destroy(&spin->info);
-	ret = pthread_spin_destroy(&spin->raw);
-	if (ret) {
-		lksmith_print_error(ret, "lksmith_spin_destroy(lock=%s): "
-			"pthread_spin_destroy of spin->raw returned error "
-			"%d: %s", name, ret, terror(ret));
-		return ret;
+	tls = get_or_create_tls();
+	if (!tls) {
+		lksmith_error(ENOMEM, "lksmith_destroy(lock=%p): failed to "
+			"allocate thread-local storage.\n", ptr);
+		ret = ENOMEM;
+		goto done;
 	}
-	return 0;
-}
-
-static struct lksmith_lock_info* lksmith_lookup_info_unlocked(lid_t lid)
-{
-	struct lksmith_lock_info *info;
-
-	if (lid >= g_lock_info_len)
-		return NULL;
-	info = g_lock_info[lid];
-	if (!info)
-		return NULL;
-	pthread_mutex_lock(&info->lock);
-	return info;
-}
-
-static struct lksmith_lock_info* lksmith_lookup_info(lid_t lid)
-{
-	struct lksmith_lock_info *info;
-
-	pthread_mutex_lock(&g_lock_info_lock);
-	info = lksmith_lookup_info_unlocked(lid);
-	pthread_mutex_unlock(&g_lock_info_lock);
-	return info;
-}
-
-static void lksmith_unlock_info(struct lksmith_lock_info *info)
-{
-	pthread_mutex_unlock(&info->lock);
-}
-
-/**
- * Given a lock ID, get the name of the lock.
- *
- * @param lid		The lock ID
- * @param name		(out param) The name of the lock.  This buffer must
- *			have length LKSMITH_LOCK_NAME_MAX.  If the lock ID
- *			can't be found, this will be set to "unknown [lock-id]"
- */
-static void lid_get_name(lid_t lid, char *lname)
-{
-	struct lksmith_lock_info *info;
-
-	info = lksmith_lookup_info(lid);
-	if (!info) {
-		snprintf(lname, LKSMITH_LOCK_NAME_MAX, "unknown %d", lid);
-		return;
+	r_pthread_mutex_lock(&g_tree_lock);
+	lk = lksmith_find(ptr);
+	if (!lk) {
+		/* This might not be an error, if we used
+		 * PTHREAD_MUTEX_INITIALIZER and then never did anything else
+		 * with the lock prior to destroying it. */
+		ret = ENOENT;
+		goto done_unlock;
 	}
-	snprintf(lname, LKSMITH_LOCK_NAME_MAX, "%s", info->data->name);
-	lksmith_unlock_info(info);
-}
-
-/**
- * Given a lock ID, add a lock to its 'after' set.
- *
- * @param lid		The lock ID
- * @param aid		The lock ID to add to the after set.
- *
- * @return		0 on success; ENOMEM if we ran out of memory;
- * 			EDEADLK if aid is also in our 'before' set.
- */
-static int lid_add_after(lid_t lid, lid_t aid)
-{
-	struct lksmith_lock_info *info;
-	char name[LKSMITH_LOCK_NAME_MAX];
-	int ret;
-
-	info = lksmith_lookup_info(lid);
-	if (!info) {
-		lksmith_print_error(EINVAL,
-			"lid_add_after(%d): no lock found for this ID.", lid);
-		return EINVAL;
+	RB_REMOVE(lock_tree, &g_tree, lk);
+	/* TODO: could probably avoid traversing the whole tree by using both
+	 * before and after pointers inside locks, or some such? */
+	RB_FOREACH(ak, lock_tree, &g_tree) {
+		lk_remove_before(ak, lk);
 	}
-	printf("checking to see if aid %d is in the before set for "
-	       "info->data->lid %d\n", aid, info->data->lid);
-	if (ldata_in_before(info->data, aid)) {
-		snprintf(name, sizeof(name), "%s", info->data->name);
-		lksmith_unlock_info(info);
-		lksmith_print_error(EDEADLK,
-			"lid_add_after(%d): lock order inversion!  %s is "
-			"supposed to be taken before %s.",
-			lid, name, name);
-		return EDEADLK;
-	}
-	ret = ldata_add_after(info->data, aid);
-	lksmith_unlock_info(info);
+done_unlock:
+	r_pthread_mutex_unlock(&g_tree_lock);
+done:
 	return ret;
 }
 
-uint32_t lksmith_get_version(void)
+static int lksmith_search(struct lksmith_lock *lk, const void *start)
 {
-	return LKSMITH_API_VERSION;
-}
+	int ret, i;
 
-int lksmith_verion_to_str(uint32_t ver, char *str, size_t str_len)
-{
-	int res;
-	
-	res = snprintf(str, str_len, "%d.%d",
-		((ver >> 16) & 0xffff), (ver & 0xffff));
-	if (res < 0) {
-		return EIO;
-	}
-	if ((size_t)res >= str_len) {
-		return ENAMETOOLONG;
-	}
-	return 0;
-}
-
-void lksmith_set_error_cb(lksmith_error_cb_t fn)
-{
-	pthread_mutex_lock(&g_error_cb_lock);
-	g_error_cb = fn;
-	pthread_mutex_unlock(&g_error_cb_lock);
-}
-
-void lksmith_error_cb_to_stderr(int code, const char *__restrict msg)
-{
-	fprintf(stderr, "LOCKSMITH ERROR %d: %s\n", code, msg);
-}
-
-/**
- * Prepare to take a lock
- *
- * @param ldata		The lock to prepare to take.
- * @param tls		The thread-local data for this thread.
- *
- * @return		0 on success; error code otherwise.
- */
-int ldata_prelock(struct lksmith_lock_info *info, struct lksmith_tls *tls)
-{
-	lid_t held;
-	unsigned int i;
-	int ret = 0;
-	struct lksmith_lock_data *ldata;
-	char name[LKSMITH_LOCK_NAME_MAX];
-
-	pthread_mutex_lock(&info->lock);
-	if (!info->data) {
-		/* In this case, the Locksmith mutex was initialized by
-		 * LKSMITH_MUTEX_INITIALIZER.  This macro sets up 
-		 * mutex.info.lock, but not mutex.info.data.
-		 * So we have to set it up here.
-		 * The awkward thing is that we need g_lock_info_lock to
-		 * perform the initialization, and that lock must be taken
-		 * before all others.  That is why there is the release +
-		 * relock + retest code.
-		 */
-		pthread_mutex_unlock(&info->lock);
-		pthread_mutex_lock(&g_lock_info_lock);
-		pthread_mutex_lock(&info->lock);
-		if (!info->data) {
-			ret = linfo_init_unlocked(NULL, info);
-		}
-		pthread_mutex_unlock(&g_lock_info_lock);
+	if (lk->ptr == start)
+		return 1;
+	if (lk->color == g_color)
+		return 0;
+	lk->color = g_color;
+	for (i = 0; i < lk->before_size; i++) {
+		ret = lksmith_search(lk->before[i], start);
 		if (ret)
 			return ret;
 	}
-	ldata = info->data;
-	{
-		char buf[4096];
-		ldata_dump(ldata, buf, sizeof(buf));
-		printf("%s\n", buf);
-	}
-	for (i = 0; i < tls->num_held; i++) {
-		if (tls->held[i] == ldata->lid)
-			continue;
-		printf("checking to see if %d is in the after set of %d\n",
-		       tls->held[i], ldata->lid);
-		if (ldata_in_after(ldata, tls->held[i])) {
-			lid_get_name(tls->held[i], name);
-			lksmith_unlock_info(info);
-			lksmith_print_error(EDEADLK, "ldata_prelock(lock=%s, "
-				"thread=%s): lock order inversion!  "
-				"%s is supposed to be taken after %s.",
-				ldata->name, tls->name, name, ldata->name);
-			continue;
-		}
-		ret = ldata_add_before(ldata, tls->held[i]);
-		if (ret) {
-			lksmith_print_error(ret, "ldata_prelock("
-				"lock=%s, thread=%s): error adding lid "
-				"%d to the before set: error %d: %s.",
-				ldata->name, tls->name, tls->held[i],
-				ret, terror(ret));
-		}
-	}
-	pthread_mutex_unlock(&info->lock);
+	return 0;
+}
 
-	/* Add ldata->lid to the 'after' set of all the locks we're
-	 * currently holding.  Unlike in the previous loop, we don't hold
-	 * ldata->lock while doing this.  This is to avoid deadlocks while
-	 * taking the locks for the other lksmith_lock_data objects.
-	 * We don't need info->lock to access info->data->lid and
-	 * info->data->name.
-	 */
+int lksmith_prelock(const void *ptr)
+{
+	const void *held;
+	struct lksmith_lock *lk, *ak;
+	struct lksmith_tls *tls;
+	int ret;
+	unsigned int i;
+
+	tls = get_or_create_tls();
+	if (!tls) {
+		lksmith_error(ENOMEM, "lksmith_prelock(lock=%p): failed to "
+			"allocate thread-local storage.\n", ptr);
+		ret = ENOMEM;
+		goto done;
+	}
+	r_pthread_mutex_lock(&g_tree_lock);
+	lk = lksmith_find(ptr);
+	if (!lk) {
+		ret = lksmith_insert(ptr, &lk);
+		if (ret) {
+			lksmith_error(ret, "lksmith_prelock(lock=%p, "
+				"thread=%s): failed to allocate lock data: "
+				"error %d: %s\n", ptr, tls->name, ret, terror(ret));
+			goto done_unlock;
+		}
+	}
+	g_color++;
 	for (i = 0; i < tls->num_held; i++) {
 		held = tls->held[i];
-		if (held == ldata->lid)
+		ak = lksmith_find(held);
+		if (!ak) {
+			lksmith_error(ENOMEM, "lksmith_prelock(lock=%p, "
+				"thread=%s): thread holds unknown lock %p.\n",
+				ptr, tls->name, held);
 			continue;
-		ret = lid_add_after(held, ldata->lid);
-		if (ret == EDEADLK) {
-			lid_get_name(held, name);
-			lksmith_print_error(EDEADLK,
-				"ldata_prelock(lock=%s, thread=%s): lock order "
-				"inversion.  %s is supposed to be "
-				"taken before %s.",
-				ldata->name, tls->name, tls->name, name);
-		} else if (ret == ENOMEM) {
-			lksmith_print_error(ret, "ldata_lock(lock=%s, "
-				"thread=%s): out of memory.",
-				ldata->name, tls->name);
-		} else if (ret) {
-			lksmith_print_error(ret, "ldata_lock(lock=%s, "
-				"thread=%s): error %d: %s.",
-				ldata->name, tls->name, ret, terror(ret));
 		}
+		ret = lksmith_search(ak, ptr);
+		if (ret) {
+			lksmith_error(EDEADLK, "lksmith_prelock(lock=%p, "
+				"thread=%s): lock inversion!  This lock "
+				"should have been taken before lock %p, which "
+				"this thread already holds.\n",
+				ptr, tls->name, held);
+			continue;
+		}
+		lk_add_before(lk, ak);
 	}
-	return 0;
-}
-
-/**
- * Perform post-lock housekeeping
- *
- * @param ldata		The lock to take.
- * @param tls		The thread-local data for this thread.
- *
- * @return		0 on success; error code otherwise.
- */
-static int ldata_postlock(struct lksmith_lock_info *info,
-			struct lksmith_tls *tls)
-{
-	struct lksmith_lock_data *ldata;
-	int ret;
-
-	/* Add this lock ID to the list of locks we're holding. */
-	ldata = info->data;
-	ret = tls_append_lid(tls, ldata->lid);
-	if (ret) {
-		lksmith_print_error(ENOMEM,
-			"ldata_lock(lock=%s, thread=%s): failed to allocate "
-			"space to store another thread id.",
-			ldata->name, tls->name);
-		return ENOMEM;
-	}
-	/* Increment the usage count for this lock. */
-	pthread_mutex_lock(&info->lock);
-	ldata->nlock++;
-	pthread_mutex_unlock(&info->lock);
-	return 0;
-}
-
-static int ldata_preunlock(struct lksmith_lock_data *ldata,
-			struct lksmith_tls *tls)
-{
-	int ret;
-
-	printf("%s: entering ldata_preunlock\n", tls->name);
-	ret = tls_remove_lid(tls, ldata->lid);
-	if (ret) {
-		lksmith_print_error(EINVAL,
-			"ldata_ulock(lock=%s, thread=%s): you tried to "
-			"unlock a lock you do not hold!",
-			ldata->name, tls->name);
-		return EINVAL;
-	}
-	return 0;
-}
-
-static int lksmith_mutex_lock_internal(struct lksmith_mutex *mutex,
-		int trylock, const struct timespec *ts)
-{
-	int ret;
-	struct lksmith_tls *tls;
-
-	tls = get_or_create_tls();
-	if (!tls) {
-		lksmith_print_error(ENOMEM,
-			"lksmith_mutex_lock_internal(lock=%s): "
-			"failed to allocate thread-local storage.", 
-			(mutex->info.data ? mutex->info.data->name : "(none)"));
-		return ENOMEM;
-	}
-	printf("%s: entering lksmith_mutex_lock_internal\n", tls->name);
-	ret = ldata_prelock(&mutex->info, tls);
-	if (ret)
-		return ret;
-	if (trylock) {
-		ret = pthread_mutex_trylock(&mutex->raw);
-	} else if (ts) {
-		ret = pthread_mutex_timedlock(&mutex->raw, ts);
-	} else {
-		ret = pthread_mutex_lock(&mutex->raw);
-	}
-	if (ret)
-		return ret;
-	ret = ldata_postlock(&mutex->info, tls);
-	if (ret) {
-		pthread_mutex_unlock(&mutex->raw);
-		return ret;
-	}
-	return 0;
-}
-
-int lksmith_mutex_lock(struct lksmith_mutex *mutex)
-{
-	return lksmith_mutex_lock_internal(mutex, 0, NULL);
-}
-
-int lksmith_mutex_trylock(struct lksmith_mutex *mutex)
-{
-	return lksmith_mutex_lock_internal(mutex, 1, NULL);
-}
-
-int lksmith_mutex_timedlock(struct lksmith_mutex *mutex,
-			    const struct timespec *ts)
-{
-	return lksmith_mutex_lock_internal(mutex, 0, ts);
-}
-
-static int lksmith_spin_lock_internal(struct lksmith_spin *spin,
-		int trylock)
-{
-	int ret;
-	struct lksmith_tls *tls;
-
-	tls = get_or_create_tls();
-	if (!tls) {
-		lksmith_print_error(ENOMEM,
-			"lksmith_spin_lock_internal(%s): failed to allocate "
-			"thread-local storage.",
-			(spin->info.data ? spin->info.data->name : "(none)"));
-		return ENOMEM;
-	}
-	ret = ldata_prelock(&spin->info, tls);
-	if (ret)
-		return ret;
-	if (trylock) {
-		ret = pthread_spin_trylock(&spin->raw);
-	} else {
-		ret = pthread_spin_lock(&spin->raw);
-	}
-	if (ret)
-		return ret;
-	ret = ldata_postlock(&spin->info, tls);
-	if (ret) {
-		pthread_spin_unlock(&spin->raw);
-		return ret;
-	}
-	return 0;
-}
-
-// TODO: warn on taking mutex when holding spin
-
-int lksmith_spin_lock(struct lksmith_spin *spin)
-{
-	return lksmith_spin_lock_internal(spin, 0);
-}
-
-int lksmith_spin_trylock(struct lksmith_spin *spin)
-{
-	return lksmith_spin_lock_internal(spin, 1);
-}
-
-int lksmith_mutex_unlock(struct lksmith_mutex *mutex)
-{
-	int ret;
-	struct lksmith_tls *tls;
-
-	tls = get_or_create_tls();
-	if (!tls) {
-		lksmith_print_error(ENOMEM,
-			"lksmith_mutex_unlock(%s): failed to allocate "
-			"thread-local storage.", mutex->info.data->name);
-		return ENOMEM;
-	}
-	ret = ldata_preunlock(mutex->info.data, tls);
-	if (ret)
-		return ret;
-	ret = pthread_mutex_unlock(&mutex->raw);
+	lk->refcnt++;
+	ret = 0;
+done_unlock:
+	r_pthread_mutex_unlock(&g_tree_lock);
+done:
 	return ret;
 }
 
-int lksmith_spin_unlock (struct lksmith_spin *spin)
+void lksmith_postlock(const void *ptr, int error)
 {
-	int ret;
 	struct lksmith_tls *tls;
+	struct lksmith_lock *lk;
+	int ret;
 
 	tls = get_or_create_tls();
 	if (!tls) {
-		lksmith_print_error(ENOMEM,
-			"lksmith_spin_unlock(lock=%s): failed to allocate "
-			"thread-local storage.", spin->info.data->name);
+		lksmith_error(ENOMEM, "lksmith_postlock(lock=%p): failed "
+			"to allocate thread-local storage.\n", ptr);
+		goto done;
+	}
+	r_pthread_mutex_lock(&g_tree_lock);
+	lk = lksmith_find(ptr);
+	if (!lk) {
+		lksmith_error(EBADE, "lksmith_postlock(lock=%p, thread=%s): "
+			"logic error: prelock didn't create the lock data?\n",
+			ptr, tls->name);
+		goto done_unlock;
+	}
+	if (error) {
+		/* If the lock operation failed, decrement the refcnt. */
+		lk->refcnt--;
+		goto done_unlock;
+	}
+	lk->nlock++;
+	ret = tls_append_held(tls, lk);
+	if (ret) {
+		lksmith_error(ENOMEM, "lksmith_postlock(lock=%p, "
+			"thread=%s): failed to allocate space to store "
+			"another thread id.\n", ptr, tls->name);
+	}
+done_unlock:
+	r_pthread_mutex_unlock(&g_tree_lock);
+done:
+	return;
+}
+
+int lksmith_preunlock(const void *ptr)
+{
+	struct lksmith_tls *tls;
+	struct lksmith_lock *lk;
+
+	tls = get_or_create_tls();
+	if (!tls) {
+		lksmith_error(ENOMEM, "lksmith_preunlock(lock=%p): failed "
+			"to allocate thread-local storage.\n", ptr);
 		return ENOMEM;
 	}
-	ret = ldata_preunlock(spin->info.data, tls);
-	if (ret)
-		return ret;
-	ret = pthread_spin_unlock(&spin->raw);
-	return ret;
+	r_pthread_mutex_lock(&g_tree_lock);
+	lk = lksmith_find(ptr);
+	if (!lk) {
+		lksmith_error(ENOENT, "lksmith_preunlock(lock=%p, thread=%s): "
+			"attempted to unlock an unknown lock.\n", ptr, tls->name);
+		r_pthread_mutex_unlock(&g_tree_lock);
+		return ENOENT;
+	}
+	r_pthread_mutex_unlock(&g_tree_lock);
+	if (tls_contains_lid(tls, ptr) == 0) {
+		lksmith_error(EPERM, "lksmith_preunlock(lock=%p, "
+			"thread=%s): attempted to unlock a lock that this "
+			"thread does not currently hold.\n", ptr, tls->name);
+		return EPERM;
+	}
+	return 0;
+}
+
+void lksmith_postunlock(const void *ptr)
+{
+	struct lksmith_tls *tls;
+	struct lksmith_lock *lk;
+	int ret;
+
+	tls = get_or_create_tls();
+	if (!tls) {
+		lksmith_error(ENOMEM, "lksmith_postunlock(lock=%p): failed "
+			"to allocate thread-local storage.\n", ptr);
+		return;
+	}
+	ret = tls_remove_held(tls, ptr);
+	if (ret) {
+		lksmith_error(EBADE, "lksmith_postunlock(lock=%p, "
+			"thread=%s): logic error: preunlock check told us "
+			"we had the lock, but we don't?\n", ptr, tls->name);
+		return;
+	}
+	r_pthread_mutex_lock(&g_tree_lock);
+	lk = lksmith_find(ptr);
+	if (!lk) {
+		lksmith_error(EBADE, "lksmith_preunlock(lock=%p, thread=%s): "
+			"logic error: attempted to unlock an unknown lock.\n",
+			ptr, tls->name);
+		r_pthread_mutex_unlock(&g_tree_lock);
+		return;
+	}
+	lk->refcnt--;
+	r_pthread_mutex_unlock(&g_tree_lock);
 }
 
 int lksmith_set_thread_name(const char *const name)
@@ -1298,9 +735,8 @@ int lksmith_set_thread_name(const char *const name)
 	struct lksmith_tls *tls = get_or_create_tls();
 
 	if (!tls) {
-		lksmith_print_error(ENOMEM,
-			"lksmith_set_thread_name(thread=%s): failed "
-			"to allocate thread-local storage.", name);
+		lksmith_error(ENOMEM, "lksmith_set_thread_name(name=%s): "
+			"failed to allocate thread-local storage.\n", name);
 		return ENOMEM;
 	}
 	snprintf(tls->name, LKSMITH_THREAD_NAME_MAX, "%s", name);
@@ -1312,9 +748,8 @@ const char* lksmith_get_thread_name(void)
 	struct lksmith_tls *tls = get_or_create_tls();
 
 	if (!tls) {
-		lksmith_print_error(ENOMEM,
-			"lksmith_get_thread_name(): failed "
-			"to allocate thread-local storage.");
+		lksmith_error(ENOMEM, "lksmith_get_thread_name(): failed "
+			"to allocate thread-local storage.\n");
 		return NULL;
 	}
 	return tls->name;
