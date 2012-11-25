@@ -11,7 +11,7 @@ Using locksmith is simple.  You do not need to recompile your program.  Just
 run your program with the LD\_PRELOAD environment variable set to the locksmith
 library.  For example,
 
-    LKSMITH_OUTPUT=syslog LD_PRELOAD=/path/to/lksmith.so /bin/ls
+    LKSMITH_OUTPUT=syslog LD_PRELOAD=/path/to/liblksmith.so /bin/ls
 
 What kinds of errors does Locksmith catch?
 --------------------------------------------
