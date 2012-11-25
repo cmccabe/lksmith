@@ -189,6 +189,77 @@ static int test_bad_unlock(void)
 	return 0;
 }
 
+#define MAX_BIG_INVERSION_LOCKS 1024 
+
+static pthread_mutex_t g_locks[MAX_BIG_INVERSION_LOCKS];
+static sem_t g_inver_sem[3];
+static unsigned int g_bigenv_threads;
+
+static int big_inversion_thread(int idx)
+{
+	unsigned int i;
+	int next;
+
+	next = (idx + 1) % g_bigenv_threads;
+	EXPECT_ZERO(pthread_mutex_lock(&g_locks[idx]));
+	EXPECT_ZERO(sem_post(&g_inver_sem[0]));
+	if (idx == 0) {
+		for (i = 0; i < g_bigenv_threads - 1; i++) {
+			EXPECT_ZERO(sem_wait(&g_inver_sem[2]));
+		}
+		EXPECT_EQ(pthread_mutex_trylock(&g_locks[next]), EBUSY);
+		EXPECT_EQ(find_recorded_error(EDEADLK), 1);
+	} else {
+		EXPECT_ZERO(sem_wait(&g_inver_sem[1]));
+		EXPECT_EQ(pthread_mutex_trylock(&g_locks[next]), EBUSY);
+		EXPECT_ZERO(sem_post(&g_inver_sem[2]));
+		EXPECT_ZERO(pthread_mutex_lock(&g_locks[next]));
+		EXPECT_ZERO(pthread_mutex_unlock(&g_locks[next]));
+	}
+	EXPECT_ZERO(pthread_mutex_unlock(&g_locks[idx]));
+	return 0;
+}
+
+THREAD_WRAPPER_INT(big_inversion_thread);
+
+static int test_big_inversion(unsigned int num_threads)
+{
+	unsigned int i;
+	pthread_t thread[MAX_BIG_INVERSION_LOCKS];
+	void *rval;
+
+	g_bigenv_threads = num_threads;
+	for (i = 0; i < sizeof(g_inver_sem)/sizeof(g_inver_sem[0]); i++) {
+		EXPECT_ZERO(sem_init(&g_inver_sem[i], 0, 0));
+	}
+	for (i = 0; i < num_threads; i++) {
+		EXPECT_ZERO(pthread_mutex_init(&g_locks[i], NULL));
+	}
+	for (i = 0; i < num_threads; i++) {
+		EXPECT_ZERO(pthread_create(&thread[i], NULL,
+			big_inversion_thread_wrap, (void*)(intptr_t)i));
+	}
+	for (i = 0; i < num_threads; i++) {
+		EXPECT_ZERO(sem_wait(&g_inver_sem[0]));
+	}
+	for (i = 0; i < num_threads - 1; i++) {
+		EXPECT_ZERO(sem_post(&g_inver_sem[1]));
+	}
+	for (i = 0; i < num_threads; i++) {
+		EXPECT_ZERO(pthread_join(thread[i], &rval));
+		EXPECT_EQ(rval, NULL);
+	}
+	for (i = 0; i < num_threads; i++) {
+		EXPECT_ZERO(pthread_mutex_destroy(&g_locks[i]));
+	}
+	for (i = 0; i < sizeof(g_inver_sem)/sizeof(g_inver_sem[0]); i++) {
+		EXPECT_ZERO(sem_destroy(&g_inver_sem[i]));
+	}
+	clear_recorded_errors();
+
+	return 0;
+}
+
 int main(void)
 {
 	set_error_cb(record_error);
@@ -196,6 +267,8 @@ int main(void)
 	EXPECT_ZERO(test_destroy_while_same_thread_has_locked());
 	EXPECT_ZERO(test_destroy_while_other_thread_has_locked());
 	EXPECT_ZERO(test_bad_unlock());
+	EXPECT_ZERO(test_big_inversion(3));
+	EXPECT_ZERO(test_big_inversion(100));
 
 	return EXIT_SUCCESS;
 }
