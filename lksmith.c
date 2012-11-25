@@ -553,6 +553,7 @@ int lksmith_destroy(const void *ptr)
 	RB_FOREACH(ak, lock_tree, &g_tree) {
 		lk_remove_before(ak, lk);
 	}
+	ret = 0;
 done_unlock:
 	r_pthread_mutex_unlock(&g_tree_lock);
 done:
@@ -657,7 +658,7 @@ void lksmith_postlock(const void *ptr, int error)
 		goto done_unlock;
 	}
 	lk->nlock++;
-	ret = tls_append_held(tls, lk);
+	ret = tls_append_held(tls, ptr);
 	if (ret) {
 		lksmith_error(ENOMEM, "lksmith_postlock(lock=%p, "
 			"thread=%s): failed to allocate space to store "

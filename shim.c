@@ -93,6 +93,17 @@ static const int g_compatible_with_errcheck[] = {
 #define NUM_COMPATIBLE_WITH_ERRCHECK (sizeof(g_compatible_with_errcheck) / \
 	sizeof(g_compatible_with_errcheck[0]))
 
+static int is_compatible_with_errcheck(int ty)
+{
+	unsigned int i;
+
+	for (i = 0; i < NUM_COMPATIBLE_WITH_ERRCHECK; i++) {
+		if (ty == g_compatible_with_errcheck[i])
+			return 1;
+	}
+	return 0;
+}
+
 static int pthread_mutex_init_errcheck(pthread_mutex_t *mutex)
 {
 	int ret;
@@ -122,39 +133,11 @@ done:
 	return ret;
 }
 
-static int is_compatible_with_errcheck(int ty)
-{
-	unsigned int i;
-
-	for (i = 0; i < NUM_COMPATIBLE_WITH_ERRCHECK; i++) {
-		if (ty == g_compatible_with_errcheck[i])
-			return 1;
-	}
-	return 0;
-}
-
-int pthread_mutex_init(pthread_mutex_t *mutex,
-	const pthread_mutexattr_t *attr_const)
+static int pthread_mutex_real_init(pthread_mutex_t *mutex,
+			pthread_mutexattr_t *attr)
 {
 	int ret, ty = 0;
-	pthread_mutexattr_t *attr = NULL;
 
-	/*
-	 * We have to cast away the const here, because the alternative,
-	 * copying the pthread_mutexattr_t, is not feasible.
-	 * pthread_mutexattr_t is an opaque type and no "copy" function is
-	 * provided by pthreads.  The set of accessor functions may vary by
-	 * platform, so we can't use those to perform a copy either.
-	 *
-	 * So, we're casting away the const here.  This should be safe in
-	 * all cases.  C/C++ compilers can't use const as an aide to
-	 * optimization (due to the aliasing problem.)
-	 * We also know that pthread_mutexattr_t is not stored in read-only
-	 * memory, because the only way to initialize it is through  
-	 * pthread_mutexattr_init, which modifies it.  There is no static
-	 * initializer provided for pthread_mutexattr_t.
-	 */
-	attr = (pthread_mutexattr_t *)attr_const;
 	if (!attr) {
 		/* No mutex attributes provided.  Initialize this as an error
 		 * checking mutex. */
@@ -169,8 +152,7 @@ int pthread_mutex_init(pthread_mutex_t *mutex,
 	if (is_compatible_with_errcheck(ty)) {
 		/* If the requested mutex type is compatible with the error
 		 * checking type, let's use that type instead, for extra
-		 * safety.
-		 */
+		 * safety. */
 		ret = pthread_mutexattr_settype(attr,
 			PTHREAD_MUTEX_ERRORCHECK);
 		if (ret) {
@@ -186,6 +168,37 @@ int pthread_mutex_init(pthread_mutex_t *mutex,
 		return ret;
 	}
 	return ret;
+}
+
+int pthread_mutex_init(pthread_mutex_t *mutex,
+	const pthread_mutexattr_t *attr)
+{
+	int ret;
+
+	ret = lksmith_optional_init((const void*)mutex);
+	if (ret)
+		return ret;
+	/*
+	 * We have to cast away the const here, because the alternative,
+	 * copying the pthread_mutexattr_t, is not feasible.
+	 * pthread_mutexattr_t is an opaque type and no "copy" function is
+	 * provided by pthreads.  The set of accessor functions may vary by
+	 * platform, so we can't use those to perform a copy either.
+	 *
+	 * So, we're casting away the const here.  This should be safe in
+	 * all cases.  C/C++ compilers can't use const as an aide to
+	 * optimization (due to the aliasing problem.)
+	 * We also know that pthread_mutexattr_t is not stored in read-only
+	 * memory, because the only way to initialize it is through  
+	 * pthread_mutexattr_init, which modifies it.  There is no static
+	 * initializer provided for pthread_mutexattr_t.
+	 */
+	ret = pthread_mutex_real_init(mutex, (pthread_mutexattr_t*)attr);
+	if (ret) {
+		lksmith_destroy((const void*)mutex);
+		return ret;
+	}
+	return 0;
 }
 
 int pthread_mutex_destroy(pthread_mutex_t *mutex)
@@ -254,12 +267,12 @@ int pthread_spin_init(pthread_spinlock_t *lock, int pshared)
 {
 	int ret;
 
-	ret = r_pthread_spin_init(lock, pshared);
+	ret = lksmith_optional_init((const void*)lock);
 	if (ret)
 		return ret;
-	ret = lksmith_optional_init((const void*)lock);
+	ret = r_pthread_spin_init(lock, pshared);
 	if (ret) {
-		r_pthread_spin_destroy(lock);
+		lksmith_destroy((const void*)lock);
 		return ret;
 	}
 	return 0;

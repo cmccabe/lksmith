@@ -27,84 +27,82 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "lksmith.h"
 #include "test.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int test_mutex_init_teardown(void)
 {
-	struct lksmith_mutex mutex;
-	EXPECT_ZERO(lksmith_mutex_init("test_mutex_1", &mutex, NULL));
-	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	pthread_mutex_t mutex;
+	EXPECT_ZERO(pthread_mutex_init(&mutex, NULL));
+	EXPECT_ZERO(pthread_mutex_destroy(&mutex));
 	return 0;
 }
 
 static int test_mutex_static_init_teardown(void)
 {
-	struct lksmith_mutex mutex = LKSMITH_MUTEX_INITIALIZER;
-	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+	EXPECT_ZERO(pthread_mutex_destroy(&mutex));
 	return 0;
 }
 
 static int test_spin_init_teardown(void)
 {
-	struct lksmith_spin spin;
-	EXPECT_ZERO(lksmith_spin_init("test_spin_1", &spin, 0));
-	EXPECT_ZERO(lksmith_spin_destroy(&spin));
+	pthread_spinlock_t spin;
+	EXPECT_ZERO(pthread_spin_init(&spin, 0));
+	EXPECT_ZERO(pthread_spin_destroy(&spin));
 	return 0;
 }
 
 static int test_mutex_lock_simple(void)
 {
-	struct lksmith_mutex mutex;
+	pthread_mutex_t mutex;
 	struct timespec ts;
 
-	EXPECT_ZERO(lksmith_mutex_init("simple_mutex_1", &mutex, NULL));
-	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_trylock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutex_init(&mutex, NULL));
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutex_trylock(&mutex));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
 	EXPECT_ZERO(get_current_timespec(&ts));
 	timespec_add_milli(&ts, 50);
-	EXPECT_ZERO(lksmith_mutex_timedlock(&mutex, &ts));
-	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	EXPECT_ZERO(pthread_mutex_timedlock(&mutex, &ts));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutex_destroy(&mutex));
 	return 0;
 }
 
 static int test_mutex_lock_simple_static(void)
 {
-	struct lksmith_mutex mutex = LKSMITH_MUTEX_INITIALIZER;
-	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutex_destroy(&mutex));
 	return 0;
 }
 
 static int test_spin_lock_simple(void)
 {
-	struct lksmith_mutex mutex;
-	EXPECT_ZERO(lksmith_mutex_init("simple_mutex_1", &mutex, NULL));
-	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_lock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_unlock(&mutex));
-	EXPECT_ZERO(lksmith_mutex_destroy(&mutex));
+	pthread_mutex_t mutex;
+	EXPECT_ZERO(pthread_mutex_init(&mutex, NULL));
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutex_destroy(&mutex));
 	return 0;
 }
 
 
 int main(void)
 {
-	lksmith_set_error_cb(die_on_error);
-
-	EXPECT_EQ(LKSMITH_API_VERSION, lksmith_get_version());
 	EXPECT_ZERO(test_mutex_init_teardown());
 	EXPECT_ZERO(test_mutex_static_init_teardown());
 	EXPECT_ZERO(test_mutex_init_teardown());

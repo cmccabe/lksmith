@@ -139,7 +139,7 @@ void lksmith_error(int err, const char *fmt, ...)
 {
 	va_list ap;
 
-	pthread_mutex_lock(&g_error_lock);
+	r_pthread_mutex_lock(&g_error_lock);
 	if (g_log_type == LKSMITH_LOG_UNINIT) {
 		lksmith_log_init();
 	}
@@ -154,7 +154,7 @@ void lksmith_error(int err, const char *fmt, ...)
 		g_error_cb(err, buf);
 	}
 	va_end(ap);
-	pthread_mutex_unlock(&g_error_lock);
+	r_pthread_mutex_unlock(&g_error_lock);
 }
 
 const char *terror(int err)
