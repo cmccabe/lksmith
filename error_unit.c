@@ -71,9 +71,7 @@ static int inver_thread_b(void)
 {
 	EXPECT_ZERO(sem_wait(&g_inver_sem1));
 	EXPECT_ZERO(pthread_mutex_lock(&g_lock2));
-	printf("doing the prelock that SHOULD generate an error...\n");
 	EXPECT_EQ(pthread_mutex_trylock(&g_lock1), EBUSY);
-	printf("=====================\n");
 	EXPECT_ZERO(sem_post(&g_inver_sem2));
 	EXPECT_ZERO(pthread_mutex_unlock(&g_lock2));
 	return 0;
@@ -102,10 +100,63 @@ static int test_ab_inversion(void)
 	return 0;
 }
 
+static int test_destroy_while_same_thread_has_locked(void)
+{
+	pthread_mutex_t mutex;
+	EXPECT_ZERO(pthread_mutex_init(&mutex, NULL));
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_EQ(pthread_mutex_destroy(&mutex), EBUSY);
+	EXPECT_EQ(find_recorded_error(EBUSY), 1);
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutex_destroy(&mutex));
+	clear_recorded_errors();
+
+	return 0;
+}
+
+static sem_t g_test_destroy_sem1;
+static sem_t g_test_destroy_sem2;
+static pthread_mutex_t g_test_destroy_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+static int test_destroy_helper1(void)
+{
+	EXPECT_ZERO(pthread_mutex_lock(&g_test_destroy_mutex));
+	EXPECT_ZERO(sem_post(&g_test_destroy_sem1));
+	EXPECT_ZERO(sem_wait(&g_test_destroy_sem2));
+	EXPECT_ZERO(pthread_mutex_unlock(&g_test_destroy_mutex));
+	return 0;
+}
+
+THREAD_WRAPPER_VOID(test_destroy_helper1);
+
+static int test_destroy_while_other_thread_has_locked(void)
+{
+	pthread_t thread_c;
+	void *rval;
+
+	EXPECT_ZERO(sem_init(&g_test_destroy_sem1, 0, 0));
+	EXPECT_ZERO(sem_init(&g_test_destroy_sem2, 0, 0));
+	EXPECT_ZERO(pthread_create(&thread_c, NULL,
+		test_destroy_helper1_wrap, NULL));
+	sem_wait(&g_test_destroy_sem1);
+	EXPECT_EQ(pthread_mutex_destroy(&g_test_destroy_mutex), EBUSY);
+	EXPECT_EQ(find_recorded_error(EBUSY), 1);
+	sem_post(&g_test_destroy_sem2);
+	EXPECT_ZERO(pthread_join(thread_c, &rval));
+	EXPECT_EQ(rval, NULL);
+	EXPECT_ZERO(pthread_mutex_destroy(&g_test_destroy_mutex));
+	EXPECT_ZERO(sem_destroy(&g_test_destroy_sem1));
+	EXPECT_ZERO(sem_destroy(&g_test_destroy_sem2));
+	clear_recorded_errors();
+	return 0;
+}
+
 int main(void)
 {
 	set_error_cb(record_error);
 	EXPECT_ZERO(test_ab_inversion());
+	EXPECT_ZERO(test_destroy_while_same_thread_has_locked());
+	EXPECT_ZERO(test_destroy_while_other_thread_has_locked());
 
 	return EXIT_SUCCESS;
 }

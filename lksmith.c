@@ -549,6 +549,19 @@ int lksmith_destroy(const void *ptr)
 		ret = ENOENT;
 		goto done_unlock;
 	}
+	if (lk->refcnt != 0) {
+		if (tls_contains_lid(tls, ptr) == 1) {
+			lksmith_error(EBUSY, "lksmith_destroy(lock=%p, "
+				"thread=%s): you must unlock this mutex "
+				"before destroying it.", ptr, tls->name);
+		} else {
+			lksmith_error(EBUSY, "lksmith_destroy(lock=%p, "
+				"thread=%s): this mutex is currently in use "
+				"and so cannot be destroyed.", ptr, tls->name);
+		}
+		ret = EBUSY;
+		goto done_unlock;
+	}
 	RB_REMOVE(lock_tree, &g_tree, lk);
 	/* TODO: could probably avoid traversing the whole tree by using both
 	 * before and after pointers inside locks, or some such? */
