@@ -5,6 +5,12 @@ Locksmith is a library for debugging locking in C, C++, or Objective C programs.
 It's designed to catch common locking errors at runtime that might otherwise
 lead to deadlocks or crashes.  Locksmith is built on top of pthreads.
 
+How do I build the source code?
+----------------------------------
+    ./configure
+    make
+    sudo make install
+
 How to use Locksmith
 --------------------------
 Using locksmith is simple.  You do not need to recompile your program.  Just
@@ -27,6 +33,20 @@ error message in this case.
 3. Unlocking a mutex from a different thread than the one which locked it.
 This is another scenario which triggers undefined behavior in pthreads, but
 which Locksmith turns into a hard error.
+
+What choices are available for LKSMITH\_OUTPUT? 
+-------------------------------------------------
+    LKSMITH_OUTPUT=syslog
+This will redirect all output to syslog.
+
+    LKSMITH_OUTPUT=stderr
+This will redirect all output to standard error.
+
+    LKSMITH_OUTPUT=stdout
+This will redirect all output to standard out
+
+    LKSMITH_OUTPUT=file:///tmp/foo
+This will redirect all output to /tmp/foo.  Substitute your own file name as appropriate.
 
 What languages and libraries is Locksmith compatible with? 
 -------------------------------------------------------------
