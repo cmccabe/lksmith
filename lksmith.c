@@ -269,15 +269,6 @@ static int tls_append_held(struct lksmith_tls *tls, const void *ptr)
 		return ENOMEM;
 	tls->held = held;
 	held[tls->num_held++] = ptr;
-
-	unsigned int i;
-	const char *prefix = "";
-	printf("%s: tls_append_lid: you are now holding ", tls->name);
-	for (i = 0; i < tls->num_held; i++) {
-		printf("%s%p", prefix, tls->held[i]);
-		prefix = ", ";
-	}
-	printf("\n");
 	return 0;
 }
 
@@ -419,7 +410,6 @@ static void lk_remove_sorted(struct lksmith_lock ** __restrict * __restrict arr,
  */
 static int lk_add_before(struct lksmith_lock *lk, struct lksmith_lock *ak)
 {
-	printf("adding %p to the before set for %p\n", ak, lk);
 	return lk_add_sorted(&lk->before, &lk->before_size, ak);
 }
 

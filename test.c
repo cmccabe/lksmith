@@ -41,6 +41,8 @@
 
 void die_on_error(int code, const char *msg)
 {
+	if (code == 0)
+		return;
 	fprintf(stderr, "die_on_error: got error %d: %s\n", code, msg);
 	abort();
 }
@@ -67,7 +69,8 @@ void record_error(int code, const char *msg __attribute__((unused)))
 {
 	struct recorded_error *rec;
 
-	printf("recording error %d, %s\n", code, msg);
+	if (code == 0)
+		return;
 	rec = calloc(1, sizeof(*rec));
 	if (!rec)
 		abort();
