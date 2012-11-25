@@ -145,6 +145,8 @@ static void lksmith_init(void)
 			"g_tree_lock) failed: error %d: %s\n", ret, terror(ret));
 		abort();
 	}
+	lksmith_error(0, "Locksmith has been initialized for process %lld\n",
+		      (long long)getpid());
 	g_initialized = 1;
 }
 
