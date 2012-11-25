@@ -56,17 +56,6 @@ extern "C" {
 #define LKSMITH_THREAD_NAME_MAX 16
 
 /******************************************************************
- *  Locksmith initializers
- *****************************************************************/
-/** Static lksmith mutex initializer.
- *
- * Similar to PTHREAD_MUTEX_INITIALIZER, this can be used to initialize a mutex
- * as part of the mutex declaration.
- */
-#define LKSMITH_MUTEX_INITIALIZER \
-	{ PTHREAD_MUTEX_INITIALIZER, { PTHREAD_MUTEX_INITIALIZER, 0 } } 
-
-/******************************************************************
  *  Locksmith API
  *****************************************************************/
 /**

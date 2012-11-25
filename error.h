@@ -31,6 +31,17 @@
 #define LKSMITH_ERROR_H
 
 /**
+ * The type signature for a Locksmith error reporting callback.
+ *
+ * For obvious reasons, functions used as error reporting callbacks should not
+ * take Locksmith-managed mutexes.
+ *
+ * @param code		The numeric Locksmith error code (see LKSMITH_ERROR_).
+ * @param msg		The human-readable error string.
+ */
+typedef void (*lksmith_error_cb_t)(int code, const char * __restrict msg);
+
+/**
  * Log a Locksmith error message.
  *
  * @param err		The error code.

@@ -79,7 +79,7 @@ add_utest(simple_unit)
 #add_executable(lock_unit test.c lock_unit.c)
 #target_link_libraries(lock_unit lksmith)
 #add_utest(lock_unit)
-#
-#add_executable(error_unit test.c error_unit.c)
-#target_link_libraries(error_unit lksmith)
-#add_utest(error_unit)
+
+add_executable(error_unit test.c error_unit.c)
+target_link_libraries(error_unit lksmith)
+add_utest(error_unit)

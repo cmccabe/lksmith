@@ -269,9 +269,11 @@ static int tls_append_held(struct lksmith_tls *tls, const void *ptr)
 	held[tls->num_held++] = ptr;
 
 	unsigned int i;
+	const char *prefix = "";
 	printf("%s: tls_append_lid: you are now holding ", tls->name);
 	for (i = 0; i < tls->num_held; i++) {
-		printf("%p", tls->held[i]);
+		printf("%s%p", prefix, tls->held[i]);
+		prefix = ", ";
 	}
 	printf("\n");
 	return 0;

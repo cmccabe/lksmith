@@ -30,9 +30,18 @@
 #ifndef LKSMITH_UTIL_TEST_H
 #define LKSMITH_UTIL_TEST_H
 
+#include "error.h" /* for lksmith_error_cb_t */
+
 #include <stdio.h> /* for fprintf */
 
 struct timespec;
+
+/**
+ * Set the Locksmith error handling callback.
+ *
+ * @param cb		The callback
+ */
+void set_error_cb(lksmith_error_cb_t cb);
 
 /**
  * Error handling function that just aborts.

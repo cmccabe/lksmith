@@ -59,7 +59,7 @@ int main(void)
 	pthread_t pthread;
 	void *rval;
 
-	putenv("LKSMITH_LOG=callback://die_on_error");
+	set_error_cb(die_on_error);
 	EXPECT_ZERO(pthread_create(&pthread, NULL,
 		test_thread_name_set_and_get, NULL));
 	EXPECT_ZERO(pthread_join(pthread, &rval));

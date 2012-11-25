@@ -31,6 +31,7 @@
 #include "test.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <semaphore.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -47,20 +48,20 @@ static void *fn##_wrap(void *v) { \
 	return (void*)(intptr_t)fn((int)(intptr_t)v); \
 }
 
-static struct lksmith_mutex g_lock1 = LKSMITH_MUTEX_INITIALIZER;
-static struct lksmith_mutex g_lock2 = LKSMITH_MUTEX_INITIALIZER;
+static pthread_mutex_t g_lock1 = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_lock2 = PTHREAD_MUTEX_INITIALIZER;
 
 static sem_t g_inver_sem1;
 static sem_t g_inver_sem2;
 
 static int inver_thread_a(void)
 {
-	EXPECT_ZERO(lksmith_mutex_lock(&g_lock1));
-	EXPECT_ZERO(lksmith_mutex_lock(&g_lock2));
-	EXPECT_ZERO(lksmith_mutex_unlock(&g_lock2));
+	EXPECT_ZERO(pthread_mutex_lock(&g_lock1));
+	EXPECT_ZERO(pthread_mutex_lock(&g_lock2));
+	EXPECT_ZERO(pthread_mutex_unlock(&g_lock2));
 	EXPECT_ZERO(sem_post(&g_inver_sem1));
 	EXPECT_ZERO(sem_wait(&g_inver_sem2));
-	EXPECT_ZERO(lksmith_mutex_unlock(&g_lock1));
+	EXPECT_ZERO(pthread_mutex_unlock(&g_lock1));
 	return 0;
 }
 
@@ -69,12 +70,12 @@ THREAD_WRAPPER_VOID(inver_thread_a);
 static int inver_thread_b(void)
 {
 	EXPECT_ZERO(sem_wait(&g_inver_sem1));
-	EXPECT_ZERO(lksmith_mutex_lock(&g_lock2));
+	EXPECT_ZERO(pthread_mutex_lock(&g_lock2));
 	printf("doing the prelock that SHOULD generate an error...\n");
-	EXPECT_EQ(lksmith_mutex_trylock(&g_lock1), EBUSY);
+	EXPECT_EQ(pthread_mutex_trylock(&g_lock1), EBUSY);
 	printf("=====================\n");
 	EXPECT_ZERO(sem_post(&g_inver_sem2));
-	EXPECT_ZERO(lksmith_mutex_unlock(&g_lock2));
+	EXPECT_ZERO(pthread_mutex_unlock(&g_lock2));
 	return 0;
 }
 
@@ -87,8 +88,6 @@ static int test_ab_inversion(void)
 
 	EXPECT_ZERO(sem_init(&g_inver_sem1, 0, 0));
 	EXPECT_ZERO(sem_init(&g_inver_sem2, 0, 0));
-	clear_recorded_errors();
-	lksmith_set_error_cb(record_error);
 	EXPECT_ZERO(pthread_create(&thread_a, NULL, inver_thread_a_wrap, NULL));
 	EXPECT_ZERO(pthread_create(&thread_b, NULL, inver_thread_b_wrap, NULL));
 	EXPECT_ZERO(pthread_join(thread_a, &rval));
@@ -98,12 +97,14 @@ static int test_ab_inversion(void)
 	EXPECT_EQ(find_recorded_error(EDEADLK), 1);
 	EXPECT_ZERO(sem_destroy(&g_inver_sem1));
 	EXPECT_ZERO(sem_destroy(&g_inver_sem2));
+	clear_recorded_errors();
 
 	return 0;
 }
 
 int main(void)
 {
+	set_error_cb(record_error);
 	EXPECT_ZERO(test_ab_inversion());
 
 	return EXIT_SUCCESS;

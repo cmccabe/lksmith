@@ -27,7 +27,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "error.h"
+#include "shim.h"
+#include "test.h"
+
 #include <errno.h>
+#include <inttypes.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -38,6 +43,15 @@ void die_on_error(int code, const char *msg)
 {
 	fprintf(stderr, "die_on_error: got error %d: %s\n", code, msg);
 	abort();
+}
+
+static char g_lksmith_log_env[4096];
+
+void set_error_cb(lksmith_error_cb_t cb)
+{
+	snprintf(g_lksmith_log_env, sizeof(g_lksmith_log_env),
+		"LKSMITH_LOG=callback://0x%"PRIxPTR, (uintptr_t)cb);
+	putenv(g_lksmith_log_env);
 }
 
 struct recorded_error {
@@ -58,17 +72,17 @@ void record_error(int code, const char *msg __attribute__((unused)))
 	if (!rec)
 		abort();
 	rec->code = code;
-	pthread_mutex_lock(&g_recorded_errors_lock);
+	r_pthread_mutex_lock(&g_recorded_errors_lock);
 	rec->next = g_recorded_errors;
 	g_recorded_errors = rec;
-	pthread_mutex_unlock(&g_recorded_errors_lock);
+	r_pthread_mutex_unlock(&g_recorded_errors_lock);
 }
 
 void clear_recorded_errors(void)
 {
 	struct recorded_error *rec, *next;
 
-	pthread_mutex_lock(&g_recorded_errors_lock);
+	r_pthread_mutex_lock(&g_recorded_errors_lock);
 	rec = g_recorded_errors;
 	while (1) {
 		if (!rec)
@@ -77,7 +91,7 @@ void clear_recorded_errors(void)
 		free(rec);
 		rec = next;
 	}
-	pthread_mutex_unlock(&g_recorded_errors_lock);
+	r_pthread_mutex_unlock(&g_recorded_errors_lock);
 }
 
 int find_recorded_error(int expect)
@@ -85,7 +99,7 @@ int find_recorded_error(int expect)
 	int found = 0;
 	struct recorded_error **rec, *cur;
 
-	pthread_mutex_lock(&g_recorded_errors_lock);
+	r_pthread_mutex_lock(&g_recorded_errors_lock);
 	rec = &g_recorded_errors;
 	while (1) {
 		cur = *rec;
@@ -99,7 +113,7 @@ int find_recorded_error(int expect)
 		}
 		rec = &(*rec)->next;
 	}
-	pthread_mutex_unlock(&g_recorded_errors_lock);
+	r_pthread_mutex_unlock(&g_recorded_errors_lock);
 	return found;
 }
 

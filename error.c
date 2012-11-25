@@ -54,17 +54,6 @@ enum lksmith_log_type {
 static enum lksmith_log_type g_log_type;
 
 /**
- * The type signature for a Locksmith error reporting callback.
- *
- * For obvious reasons, functions used as error reporting callbacks should not
- * take Locksmith-managed mutexes.
- *
- * @param code		The numeric Locksmith error code (see LKSMITH_ERROR_).
- * @param msg		The human-readable error string.
- */
-typedef void (*lksmith_error_cb_t)(int code, const char * __restrict msg);
-
-/**
  * Locksmith error callback to use.
  */
 static lksmith_error_cb_t g_error_cb;
@@ -96,17 +85,30 @@ static void lksmith_log_init_file(const char *name)
 	}
 }
 
-static void lksmith_log_init_cb(const char *name)
+static int lksmith_log_init_cb(const char *addr_str)
 {
-	g_error_cb = get_dlsym_next(name);
-	if (!g_error_cb) {
-		fprintf(stderr, "Unable to resolve callback named '%s'.\n"
-			"redirecting output to stderr.\n", name);
-		g_log_type = LKSMITH_LOG_FILE;
-		g_log_file = stderr;
-		return;
+	int err;
+	unsigned long long int addr;
+
+	if ((addr_str[0] != '0') || (addr_str[1] != 'x')) {
+		fprintf(stderr, "Invalid callback address '%s'.\n"
+			"Callback address must begin with 0x.\n"
+			"Redirecting output to stderr.\n", addr_str);
+		return EINVAL;
 	}
+	errno = 0;
+	addr = strtoull(addr_str, NULL, 16);
+	err = errno;
+	if (err) {
+		fprintf(stderr, "Unable to parse callback address '%s'.\n"
+			"error %d: %s.\n"
+			"Redirecting output to stderr.\n",
+			addr_str, err, terror(err));
+		return err;
+	}
+	g_error_cb = (lksmith_error_cb_t)addr;
 	g_log_type = LKSMITH_LOG_CALLBACK;
+	return 0;
 }
 
 static void lksmith_log_init(void)
@@ -126,7 +128,10 @@ static void lksmith_log_init(void)
 	} else if (strstr(ty, FILE_PREFIX) == ty) {
 		lksmith_log_init_file(ty + strlen(FILE_PREFIX));
 	} else if (strstr(ty, CALLBACK_PREFIX) == ty) {
-		lksmith_log_init_cb(ty + strlen(CALLBACK_PREFIX));
+		if (lksmith_log_init_cb(ty + strlen(CALLBACK_PREFIX))) {
+			g_log_type = LKSMITH_LOG_FILE;
+			g_log_file = stderr;
+		}
 	} else {
 		fprintf(stderr, "Sorry, unable to understand log target '%s'. "
 			"redirecting output to stderr.\n", ty);

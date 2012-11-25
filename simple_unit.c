@@ -103,6 +103,7 @@ static int test_spin_lock_simple(void)
 
 int main(void)
 {
+	set_error_cb(die_on_error);
 	EXPECT_ZERO(test_mutex_init_teardown());
 	EXPECT_ZERO(test_mutex_static_init_teardown());
 	EXPECT_ZERO(test_mutex_init_teardown());
