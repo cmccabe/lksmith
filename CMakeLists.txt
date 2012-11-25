@@ -67,6 +67,8 @@ add_library(lksmith SHARED
 )
 
 target_link_libraries(lksmith dl pthread)
+INSTALL(TARGETS lksmith
+    LIBRARY DESTINATION lib)
 
 add_executable(thread_unit test.c thread_unit.c)
 target_link_libraries(thread_unit lksmith)
