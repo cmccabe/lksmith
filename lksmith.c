@@ -560,6 +560,8 @@ int lksmith_destroy(const void *ptr)
 	RB_FOREACH(ak, lock_tree, &g_tree) {
 		lk_remove_before(ak, lk);
 	}
+	free(lk->before);
+	free(lk);
 	ret = 0;
 done_unlock:
 	r_pthread_mutex_unlock(&g_tree_lock);
