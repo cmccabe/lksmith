@@ -43,7 +43,7 @@ This will redirect all output to syslog.
 This will redirect all output to standard error.
 
     LKSMITH_OUTPUT=stdout
-This will redirect all output to standard out
+This will redirect all output to standard output.
 
     LKSMITH_OUTPUT=file:///tmp/foo
 This will redirect all output to /tmp/foo.  Substitute your own file name as appropriate.
