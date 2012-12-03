@@ -266,11 +266,29 @@ static int test_take_sleeping_lock_while_holding_spin(void)
 	pthread_spinlock_t spin;
 	EXPECT_ZERO(pthread_mutex_init(&mutex, NULL));
 	EXPECT_ZERO(pthread_spin_init(&spin, 0));
+
+	/* taking spin lock while holding mutex-- this is ok */
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_ZERO(pthread_spin_lock(&spin));
+	EXPECT_ZERO(pthread_spin_unlock(&spin));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_EQ(find_recorded_error(EWOULDBLOCK), 0);
+
+	/* taking mutex while holding spin lock-- this is not ok */
 	EXPECT_ZERO(pthread_spin_lock(&spin));
 	EXPECT_ZERO(pthread_mutex_lock(&mutex));
 	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
 	EXPECT_ZERO(pthread_spin_unlock(&spin));
 	EXPECT_EQ(find_recorded_error(EWOULDBLOCK), 1);
+
+	/* we don't whine about the same problem more than once-- it would
+	 * flood the logs */
+	EXPECT_ZERO(pthread_spin_lock(&spin));
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_spin_unlock(&spin));
+	EXPECT_EQ(find_recorded_error(EWOULDBLOCK), 0);
+
 	EXPECT_ZERO(pthread_spin_destroy(&spin));
 	EXPECT_ZERO(pthread_mutex_destroy(&mutex));
 	clear_recorded_errors();
