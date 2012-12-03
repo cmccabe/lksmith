@@ -47,12 +47,23 @@
 /******************************************************************
  *  Locksmith private data structures
  *****************************************************************/
+#define MAX_NLOCK 0x3fffffffffffffffULL
+
+struct lksmith_lock_props {
+	/** The number of times this mutex has been locked. */
+	uint64_t nlock : 62;
+	/** 1 if this mutex is a sleeping lock */
+	uint64_t sleeper : 1;
+	/** 1 if we have already warned about taking this lock while
+	 * a spin lock is held. */
+	uint64_t spin_warn : 1;
+};
+
 struct lksmith_lock {
 	RB_ENTRY(lksmith_lock) entry;
 	/** The lock pointer */
 	const void *ptr;
-	/** The number of times this mutex has been locked. */
-	uint64_t nlock;
+	struct lksmith_lock_props props;
 	/** The color that this node has been painted (used in traversal) */
 	uint64_t color;
 	/** Reference count for this lock */
@@ -70,6 +81,8 @@ struct lksmith_tls {
 	unsigned int num_held;
 	/** Unsorted list of locks held */
 	const void **held;
+	/** Number of spin locks currently held. */
+	uint64_t num_spins;
 };
 
 /******************************************************************
@@ -440,8 +453,9 @@ static void lk_dump(const struct lksmith_lock *lk,
 	const char *prefix = "";
 
 	fwdprintf(buf, off, buf_len, "lk{ptr=%p "
-		  "nlock=%"PRId64", color=%"PRId64", refcnt=%d, "
-		  "before={", (void*)lk->ptr, lk->nlock, lk->color, lk->refcnt);
+		  "nlock=%"PRId64", sleeper=%d, color=%"PRId64", refcnt=%d, "
+		  "before={", (void*)lk->ptr, (uint64_t)lk->props.nlock,
+		  lk->props.sleeper, lk->color, lk->refcnt);
 	for (i = 0; i < lk->before_size; i++) {
 		fwdprintf(buf, off, buf_len, "%s%p",
 			  prefix, lk->before[i]);
@@ -467,7 +481,8 @@ static void tree_print(void)
 	fprintf(stderr, "\n}\n");
 }
 
-static int lksmith_insert(const void *ptr, struct lksmith_lock **lk)
+static int lksmith_insert(const void *ptr, int sleeper,
+		struct lksmith_lock **lk)
 {
 	struct lksmith_lock *ak, *bk;
 	ak = calloc(1, sizeof(*ak));
@@ -475,6 +490,7 @@ static int lksmith_insert(const void *ptr, struct lksmith_lock **lk)
 		return ENOMEM;
 	}
 	ak->ptr = ptr;
+	ak->props.sleeper = !!sleeper;
 	bk = RB_INSERT(lock_tree, &g_tree, ak);
 	if (bk) {
 		free(ak);
@@ -495,7 +511,7 @@ static struct lksmith_lock *lksmith_find(const void *ptr)
 /******************************************************************
  *  API functions
  *****************************************************************/
-int lksmith_optional_init(const void *ptr)
+int lksmith_optional_init(const void *ptr, int sleeper)
 {
 	struct lksmith_tls *tls;
 	struct lksmith_lock *lk;
@@ -508,7 +524,7 @@ int lksmith_optional_init(const void *ptr)
 		return ENOMEM;
 	}
 	r_pthread_mutex_lock(&g_tree_lock);
-	ret = lksmith_insert(ptr, &lk);
+	ret = lksmith_insert(ptr, sleeper, &lk);
 	r_pthread_mutex_unlock(&g_tree_lock);
 	if (ret) {
 		lksmith_error(ret, "lksmith_optional_init(lock=%p, "
@@ -586,7 +602,7 @@ static int lksmith_search(struct lksmith_lock *lk, const void *start)
 	return 0;
 }
 
-int lksmith_prelock(const void *ptr)
+int lksmith_prelock(const void *ptr, int sleeper)
 {
 	const void *held;
 	struct lksmith_lock *lk, *ak;
@@ -604,7 +620,7 @@ int lksmith_prelock(const void *ptr)
 	r_pthread_mutex_lock(&g_tree_lock);
 	lk = lksmith_find(ptr);
 	if (!lk) {
-		ret = lksmith_insert(ptr, &lk);
+		ret = lksmith_insert(ptr, sleeper, &lk);
 		if (ret) {
 			lksmith_error(ret, "lksmith_prelock(lock=%p, "
 				"thread=%s): failed to allocate lock data: "
@@ -666,12 +682,24 @@ void lksmith_postlock(const void *ptr, int error)
 		lk->refcnt--;
 		goto done_unlock;
 	}
-	lk->nlock++;
+	if (lk->props.nlock < MAX_NLOCK) {
+		lk->props.nlock++;
+	}
 	ret = tls_append_held(tls, ptr);
 	if (ret) {
 		lksmith_error(ENOMEM, "lksmith_postlock(lock=%p, "
 			"thread=%s): failed to allocate space to store "
 			"another thread id.\n", ptr, tls->name);
+		goto done_unlock;
+	}
+	if (!lk->props.sleeper) {
+		tls->num_spins++;
+	} else if ((tls->num_spins > 0) && (!lk->props.spin_warn)) {
+		lksmith_error(EWOULDBLOCK, "lksmith_postlock(lock=%p, "
+			"thread=%s): performance problem: you are taking "
+			"a sleeping lock while holding a spin lock.\n",
+			ptr, tls->name);
+		lk->props.spin_warn = 1;
 	}
 done_unlock:
 	r_pthread_mutex_unlock(&g_tree_lock);
@@ -683,6 +711,7 @@ int lksmith_preunlock(const void *ptr)
 {
 	struct lksmith_tls *tls;
 	struct lksmith_lock *lk;
+	int sleeper;
 
 	tls = get_or_create_tls();
 	if (!tls) {
@@ -698,12 +727,16 @@ int lksmith_preunlock(const void *ptr)
 		r_pthread_mutex_unlock(&g_tree_lock);
 		return ENOENT;
 	}
+	sleeper = lk->props.sleeper;
 	r_pthread_mutex_unlock(&g_tree_lock);
 	if (tls_contains_lid(tls, ptr) == 0) {
 		lksmith_error(EPERM, "lksmith_preunlock(lock=%p, "
 			"thread=%s): attempted to unlock a lock that this "
 			"thread does not currently hold.\n", ptr, tls->name);
 		return EPERM;
+	}
+	if (!sleeper) {
+		tls->num_spins--;
 	}
 	return 0;
 }

@@ -64,7 +64,6 @@ details.
 
 TODO
 -------------------------------------------------------------
-* warn about taking a sleeping lock when holding a spin lock
 * Support pthread rwlocks
 * Support pthread barriers
 * Add the ability to dump out debugging information about the state of all locks on command.

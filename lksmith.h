@@ -82,10 +82,11 @@ int lksmith_verion_to_str(uint32_t ver, char *str, size_t str_len);
  * Initialize a locksmith lock.  This function is optional.
  *
  * @param ptr		pointer to the lock to initialize
+ * @param sleeper	1 if this lock is a sleeper; 0 otherwise
  *
  * @return		0 on success; error code otherwise
  */
-int lksmith_optional_init(const void *ptr);
+int lksmith_optional_init(const void *ptr, int sleeper);
 
 /**
  * Destroy a lock.
@@ -108,12 +109,13 @@ void lksmith_postdestroy(const void *ptr);
  * Perform some error checking before taking a lock.
  *
  * @param ptr		pointer to the lock
+ * @param sleeper	1 if this lock is a sleeper; 0 otherwise
  *
  * @return		0 if we should continue with the lock; error code
  *			otherwise.  We may print an error even if 0 is
  *			returned.
  */
-int lksmith_prelock(const void *ptr);
+int lksmith_prelock(const void *ptr, int sleeper);
 
 /**
  * Take a lock.

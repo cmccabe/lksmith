@@ -175,7 +175,7 @@ int pthread_mutex_init(pthread_mutex_t *mutex,
 {
 	int ret;
 
-	ret = lksmith_optional_init((const void*)mutex);
+	ret = lksmith_optional_init((const void*)mutex, 1);
 	if (ret)
 		return ret;
 	/*
@@ -221,7 +221,7 @@ int pthread_mutex_destroy(pthread_mutex_t *mutex)
 
 int pthread_mutex_trylock(pthread_mutex_t *mutex)
 {
-	int ret = lksmith_prelock(mutex);
+	int ret = lksmith_prelock(mutex, 1);
 	if (ret)
 		return ret;
 	ret = r_pthread_mutex_trylock(mutex);
@@ -231,7 +231,7 @@ int pthread_mutex_trylock(pthread_mutex_t *mutex)
 
 int pthread_mutex_lock(pthread_mutex_t *mutex)
 {
-	int ret = lksmith_prelock(mutex);
+	int ret = lksmith_prelock(mutex, 1);
 	if (ret)
 		return ret;
 	ret = r_pthread_mutex_lock(mutex);
@@ -242,7 +242,7 @@ int pthread_mutex_lock(pthread_mutex_t *mutex)
 int pthread_mutex_timedlock(pthread_mutex_t *__restrict mutex,
 		__const struct timespec *__restrict ts)
 {
-	int ret = lksmith_prelock(mutex);
+	int ret = lksmith_prelock(mutex, 1);
 	if (ret)
 		return ret;
 	ret = r_pthread_mutex_timedlock(mutex, ts);
@@ -267,7 +267,7 @@ int pthread_spin_init(pthread_spinlock_t *lock, int pshared)
 {
 	int ret;
 
-	ret = lksmith_optional_init((const void*)lock);
+	ret = lksmith_optional_init((const void*)lock, 0);
 	if (ret)
 		return ret;
 	ret = r_pthread_spin_init(lock, pshared);
@@ -290,7 +290,7 @@ int pthread_spin_destroy(pthread_spinlock_t *lock)
 
 int pthread_spin_lock(pthread_spinlock_t *lock)
 {
-	int ret = lksmith_prelock((const void*)lock);
+	int ret = lksmith_prelock((const void*)lock, 0);
 	if (ret)
 		return ret;
 	ret = r_pthread_spin_lock(lock);
@@ -300,7 +300,7 @@ int pthread_spin_lock(pthread_spinlock_t *lock)
 
 int pthread_spin_trylock(pthread_spinlock_t *lock)
 {
-	int ret = lksmith_prelock((const void*)lock);
+	int ret = lksmith_prelock((const void*)lock, 0);
 	if (ret)
 		return ret;
 	ret = r_pthread_spin_trylock(lock);
