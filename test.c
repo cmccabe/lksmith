@@ -132,6 +132,17 @@ void *xcalloc(size_t s)
 	return p;
 }
 
+char *xstrdup(const char *str)
+{
+	char *s = strdup(str);
+	if (!s) {
+		fprintf(stderr, "failed to duplicate string of size "
+			"%zd.\n", strlen(str));
+		exit(1);
+	}
+	return s;
+}
+
 int get_current_timespec(struct timespec *ts)
 {
 	struct timeval tv;
