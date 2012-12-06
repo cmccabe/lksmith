@@ -27,12 +27,12 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#define LKSMITH_SHIM_C
+#define LKSMITH_HANDLER_DOT_C
 
 #include "error.h"
 #include "lksmith.h"
 #include "util.h"
-#include "shim.h"
+#include "handler.h"
 
 #include <errno.h>
 #include <dlfcn.h>
@@ -41,7 +41,7 @@
 #include <stdlib.h>
 
 /**
- * Shim functions used to redirect pthreads calls to Locksmith.
+ * Handler functions used to redirect pthreads calls to Locksmith.
  */
 
 void* get_dlsym_next(const char *fname)
@@ -59,7 +59,7 @@ void* get_dlsym_next(const char *fname)
 		 * a valid address for any of the things we're looking up, so
 		 * we're going to assume that an error occurred.
 		 */
-		fprintf(stderr, "locksmith shim error: dlsym error: %s\n",
+		fprintf(stderr, "locksmith handler error: dlsym error: %s\n",
 			dlerror());
 		return NULL;
 	}
@@ -329,7 +329,7 @@ int pthread_spin_unlock(pthread_spinlock_t *lock)
 	} \
 } while (0);
 
-int lksmith_shim_init(void)
+int lksmith_handler_init(void)
 {
 	LOAD_FUNC(pthread_mutex_init);
 	LOAD_FUNC(pthread_mutex_destroy);

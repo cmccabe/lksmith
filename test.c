@@ -28,7 +28,7 @@
  */
 
 #include "error.h"
-#include "shim.h"
+#include "handler.h"
 #include "test.h"
 
 #include <errno.h>
@@ -37,6 +37,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/time.h>
 
 void die_on_error(int code, const char *msg)

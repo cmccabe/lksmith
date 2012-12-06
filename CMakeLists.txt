@@ -62,7 +62,7 @@ add_library(lksmith SHARED
     error.c
     linux_platform.c
     lksmith.c
-    shim.c
+    handler.c
     util.c
 )
 

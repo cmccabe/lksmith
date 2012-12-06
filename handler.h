@@ -27,15 +27,15 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef LKSMITH_SHIM_H
-#define LKSMITH_SHIM_H
+#ifndef LKSMITH_HANDLER_H
+#define LKSMITH_HANDLER_H
 
 #include <pthread.h>
 
 /******************************************************************
  * The raw pthreads functions.
  *****************************************************************/
-#ifndef LKSMITH_SHIM_C
+#ifndef LKSMITH_HANDLER_DOT_C
 #define EXTERN extern
 #else
 #define EXTERN
@@ -68,7 +68,7 @@ EXTERN int (*r_pthread_spin_unlock)(pthread_spinlock_t *lock);
 /******************************************************************
  * Functions
  *****************************************************************/
-int lksmith_shim_init(void);
+int lksmith_handler_init(void);
 
 void* get_dlsym_next(const char *fname);
 

@@ -28,7 +28,7 @@
  */
 
 #include "error.h"
-#include "shim.h"
+#include "handler.h"
 #include "util.h"
 
 #include <errno.h>

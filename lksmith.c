@@ -29,9 +29,9 @@
 
 #include "config.h"
 #include "error.h"
+#include "handler.h"
 #include "lksmith.h"
 #include "platform.h"
-#include "shim.h"
 #include "tree.h"
 #include "util.h"
 
@@ -139,10 +139,10 @@ static void lksmith_init(void)
 {
 	int ret;
 
-	ret = lksmith_shim_init();
+	ret = lksmith_handler_init();
 	if (ret) {
-		/* can't use lksmith_error before shim_init */
-		fprintf(stderr, "lksmith_init: lksmith_shim_init failed.  "
+		/* can't use lksmith_error before handler */
+		fprintf(stderr, "lksmith_init: lksmith_handler_init failed.  "
 			"Can't find the real pthreads functions.\n");
 		abort();
 	}
