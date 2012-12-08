@@ -74,16 +74,6 @@ void clear_recorded_errors(void);
 int find_recorded_error(int expect);
 
 /**
- * Allocate some zeroed memory, or die
- *
- * @param s		The number of bytes to allocate.
- *
- * @return		The calloc'ed memory.  The program will be aborted with
- *			an error message to stderr on out-of-memory.
- */
-void *xcalloc(size_t s);
-
-/**
  * Get the current time
  *
  * @param ts		(out param) the current time

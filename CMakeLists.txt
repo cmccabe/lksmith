@@ -70,18 +70,14 @@ target_link_libraries(lksmith dl pthread)
 INSTALL(TARGETS lksmith
     LIBRARY DESTINATION lib)
 
-add_executable(thread_unit test.c thread_unit.c)
+add_executable(thread_unit test.c thread_unit.c test.c mem.c)
 target_link_libraries(thread_unit lksmith)
 add_utest(thread_unit)
 
-add_executable(simple_unit test.c simple_unit.c)
+add_executable(simple_unit test.c simple_unit.c test.c mem.c)
 target_link_libraries(simple_unit lksmith)
 add_utest(simple_unit)
 
-#add_executable(lock_unit test.c lock_unit.c)
-#target_link_libraries(lock_unit lksmith)
-#add_utest(lock_unit)
-
-add_executable(error_unit test.c error_unit.c)
+add_executable(error_unit test.c error_unit.c test.c mem.c)
 target_link_libraries(error_unit lksmith)
 add_utest(error_unit)
