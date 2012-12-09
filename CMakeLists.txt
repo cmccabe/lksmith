@@ -81,3 +81,5 @@ add_utest(simple_unit)
 add_executable(error_unit test.c error_unit.c test.c mem.c)
 target_link_libraries(error_unit lksmith)
 add_utest(error_unit)
+
+add_executable(make_shim make_shim.c mem.c)
