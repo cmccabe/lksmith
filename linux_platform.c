@@ -29,8 +29,10 @@
 
 #include "platform.h"
 
+#include <dlfcn.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/syscall.h>
 
 extern pid_t gettid(void);
@@ -42,4 +44,36 @@ void platform_create_thread_name(char * __restrict out, size_t out_len)
 	 * other debugging tools can also examine the kernel thread ID. */
 	pid_t tid = (pid_t)syscall(SYS_gettid);
 	snprintf(out, out_len, "thread %"PRId64, (uint64_t)tid);
+}
+
+void* get_dlsym_next(const char *fname)
+{
+	void *v;
+
+	if (!strcmp(fname, "pthread_cond_wait")) {
+		v = dlvsym(RTLD_NEXT, fname, "GLIBC_2.3.2");
+	} else {
+		v = dlsym(RTLD_NEXT, fname);
+	}
+	if (!v) {
+		/* dlerror is not thread-safe.  However, since there is no
+		 * thread-safe interface, we really don't have much choice,
+		 * do we?
+		 *
+		 * Also, technically a NULL return from dlsym doesn't
+		 * necessarily indicate an error.  However, NULL is not
+		 * a valid address for any of the things we're looking up, so
+		 * we're going to assume that an error occurred.
+		 */
+		fprintf(stderr, "locksmith handler error: dlsym error: %s\n",
+			dlerror());
+		return NULL;
+	}
+	/* Another problem with the dlsym interface is that technically, a
+	 * void* should never be cast to a function pointer, since the C
+	 * standard allows them to have different sizes.
+	 * Apparently the POSIX committee didn't read that part of the C
+	 * standard.  We'll pretend we didn't either.
+	 */
+	return v;
 }

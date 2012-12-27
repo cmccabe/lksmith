@@ -34,6 +34,9 @@ error message in this case.
 This is another scenario which triggers undefined behavior in pthreads, but
 which Locksmith turns into a hard error.
 
+4. Calling pthread_cond_wait on something that isn't a mutex locked by the
+current thread.
+
 What choices are available for LKSMITH\_OUTPUT? 
 -------------------------------------------------
     LKSMITH_OUTPUT=syslog

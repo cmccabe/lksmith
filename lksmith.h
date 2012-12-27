@@ -141,6 +141,17 @@ int lksmith_preunlock(const void *ptr);
 void lksmith_postunlock(const void *ptr);
 
 /**
+ * Check if the current thread holds the given lock.
+ *
+ * @param ptr		pointer to the lock to check for
+ *
+ * @return		-1 if the thread does not hold the lock;
+ * 			0 if the thread holds the lock;
+ * 			a positive error code otherwise.
+ */
+int lksmith_check_locked(const void *ptr);
+
+/**
  * Set the thread name.
  *
  * @param name		The name to use for this thread.

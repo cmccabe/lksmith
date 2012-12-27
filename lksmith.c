@@ -773,6 +773,19 @@ void lksmith_postunlock(const void *ptr)
 	r_pthread_mutex_unlock(&g_tree_lock);
 }
 
+int lksmith_check_locked(const void *ptr)
+{
+	struct lksmith_tls *tls;
+
+	tls = get_or_create_tls();
+	if (!tls) {
+		lksmith_error(ENOMEM, "lksmith_check_locked(lock=%p): failed "
+			"to allocate thread-local storage.\n", ptr);
+		return ENOMEM;
+	}
+	return tls_contains_lid(tls, ptr) ? 0 : -1;
+}
+
 int lksmith_set_thread_name(const char *const name)
 {
 	struct lksmith_tls *tls = get_or_create_tls();

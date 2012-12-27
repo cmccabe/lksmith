@@ -296,6 +296,44 @@ static int test_take_sleeping_lock_while_holding_spin(void)
 	return 0;
 }
 
+static pthread_cond_t g_cond1 = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t g_cslock1 = PTHREAD_MUTEX_INITIALIZER;
+
+static int cond_signaller1(void)
+{
+	EXPECT_ZERO(pthread_mutex_lock(&g_cslock1));
+	EXPECT_ZERO(pthread_cond_signal(&g_cond1));
+	EXPECT_ZERO(pthread_mutex_unlock(&g_cslock1));
+	return 0;
+}
+
+THREAD_WRAPPER_VOID(cond_signaller1);
+
+static int test_invalid_cond_wait(void)
+{
+	pthread_t thread;
+
+	/* We must not call pthread_cond_wait on a mutex we don't actually
+	 * hold. */
+	EXPECT_EQ(pthread_cond_wait(&g_cond1, &g_cslock1), EPERM);
+	EXPECT_EQ(find_recorded_error(EPERM), 1);
+
+	/* Here is an example of using the API correctly. */
+	EXPECT_ZERO(pthread_mutex_lock(&g_cslock1));
+	EXPECT_ZERO(pthread_create(&thread, NULL,
+		cond_signaller1_wrap, NULL));
+	EXPECT_EQ(pthread_cond_wait(&g_cond1, &g_cslock1), 0);
+	EXPECT_ZERO(pthread_mutex_unlock(&g_cslock1));
+	EXPECT_ZERO(pthread_join(thread, NULL));
+
+	/* test that we can destroy the pthread_cond and re-create it. */
+	EXPECT_ZERO(pthread_cond_destroy(&g_cond1));
+	EXPECT_ZERO(pthread_cond_init(&g_cond1, NULL));
+	EXPECT_ZERO(pthread_cond_destroy(&g_cond1));
+	EXPECT_ZERO(pthread_mutex_destroy(&g_cslock1));
+	return 0;
+}
+
 int main(void)
 {
 	set_error_cb(record_error);
@@ -306,6 +344,7 @@ int main(void)
 	EXPECT_ZERO(test_big_inversion(3));
 	EXPECT_ZERO(test_big_inversion(100));
 	EXPECT_ZERO(test_take_sleeping_lock_while_holding_spin());
+	EXPECT_ZERO(test_invalid_cond_wait());
 
 	return EXIT_SUCCESS;
 }

@@ -65,11 +65,16 @@ EXTERN int (*r_pthread_spin_trylock)(pthread_spinlock_t *lock);
 
 EXTERN int (*r_pthread_spin_unlock)(pthread_spinlock_t *lock);
 
+EXTERN int (*r_pthread_cond_wait)(pthread_cond_t *__restrict cond,
+	pthread_mutex_t *__restrict mutex);
+
+EXTERN int (*r_pthread_cond_timedwait)(pthread_cond_t *__restrict cond,
+	pthread_mutex_t *__restrict mutex,
+	const struct timespec *__restrict abstime);
+
 /******************************************************************
  * Functions
  *****************************************************************/
 int lksmith_handler_init(void);
-
-void* get_dlsym_next(const char *fname);
 
 #endif

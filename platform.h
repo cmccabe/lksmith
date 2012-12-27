@@ -47,4 +47,22 @@
  */
 void platform_create_thread_name(char * __restrict out, size_t out_len);
 
+/**
+ * Find a function named 'fname' in a library other than the current one.  We
+ * need this to forward methods that we have intercepted onwards to the
+ * "real" pthreads functions.
+ *
+ * @param fname		The function name to look for
+ *
+ * @return		NULL if the function could not be found; the function
+ *			pointer otherwise.  Technically, a void pointer should
+ *			never be cast to a function pointer, since the C
+ *			standard allows them to have different sizes.  However,
+ *			the POSIX dlsym functions we're calling ignore this
+ *			nicety, and alternative interfaces are not available.
+ *			So there seems to be little point in being pedantic about
+ *			it in the code.
+ */
+void* get_dlsym_next(const char *fname);
+
 #endif

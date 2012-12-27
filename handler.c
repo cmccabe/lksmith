@@ -33,6 +33,7 @@
 #include "lksmith.h"
 #include "util.h"
 #include "handler.h"
+#include "platform.h"
 
 #include <errno.h>
 #include <dlfcn.h>
@@ -43,34 +44,6 @@
 /**
  * Handler functions used to redirect pthreads calls to Locksmith.
  */
-
-void* get_dlsym_next(const char *fname)
-{
-	void *v;
-
-	v = dlsym(RTLD_NEXT, fname);
-	if (!v) {
-		/* dlerror is not thread-safe.  However, since there is no
-		 * thread-safe interface, we really don't have much choice,
-		 * do we?
-		 *
-		 * Also, technically a NULL return from dlsym doesn't
-		 * necessarily indicate an error.  However, NULL is not
-		 * a valid address for any of the things we're looking up, so
-		 * we're going to assume that an error occurred.
-		 */
-		fprintf(stderr, "locksmith handler error: dlsym error: %s\n",
-			dlerror());
-		return NULL;
-	}
-	/* Another problem with the dlsym interface is that technically, a
-	 * void* should never be cast to a function pointer, since the C
-	 * standard allows them to have different sizes.
-	 * Apparently the POSIX committee didn't read that part of the C
-	 * standard.  We'll pretend we didn't either.
-	 */
-	return v;
-}
 
 /**
  * A list of mutex types that are compatible with error checking mutexes.
@@ -320,6 +293,40 @@ int pthread_spin_unlock(pthread_spinlock_t *lock)
 	return 0;
 }
 
+int pthread_cond_timedwait(pthread_cond_t *__restrict cond,
+	pthread_mutex_t *__restrict mutex,
+	const struct timespec *__restrict abstime)
+{
+	int ret = lksmith_check_locked((const void*)mutex);
+	if (ret > 0) {
+		return ret;
+	} else if (ret == -1) {
+		lksmith_error(EPERM, "pthread_cond_timedwait(cond=%p, "
+			"mutex=%p): you called pthread_cond_timedwait on "
+			"a mutex that you do not currently hold.  Please "
+			"fix this serious error in your program.\n",
+			cond, mutex);
+		return EPERM;
+	}
+	return r_pthread_cond_timedwait(cond, mutex, abstime);
+}
+
+int pthread_cond_wait(pthread_cond_t *__restrict cond,
+	pthread_mutex_t *__restrict mutex)
+{
+	int ret = lksmith_check_locked((const void*)mutex);
+	if (ret > 0) {
+		return ret;
+	} else if (ret == -1) {
+		lksmith_error(EPERM, "pthread_cond_wait(cond=%p, mutex=%p): "
+			"you called pthread_cond_wait on a mutex that you "
+			"do not currently hold.  Please fix this serious "
+			"error in your program.\n", cond, mutex);
+		return EPERM;
+	}
+	return r_pthread_cond_wait(cond, mutex);
+}
+
 // TODO: support barriers
 
 #define LOAD_FUNC(fn) do { \
@@ -342,6 +349,8 @@ int lksmith_handler_init(void)
 	LOAD_FUNC(pthread_spin_lock);
 	LOAD_FUNC(pthread_spin_trylock);
 	LOAD_FUNC(pthread_spin_unlock);
+	LOAD_FUNC(pthread_cond_wait);
+	LOAD_FUNC(pthread_cond_timedwait);
 
 	return 0;
 }

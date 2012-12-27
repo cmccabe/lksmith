@@ -46,3 +46,17 @@ void platform_create_thread_name(char * __restrict out, size_t out_len)
 	new_tid = __sync_add_and_fetch(&g_tid, 1);
 	snprintf(out, out_len, "thread %"PRId64, new_tid);
 }
+
+void* get_dlsym_next(const char *fname)
+{
+	void *v;
+
+	/* We need RTLD_NEXT to get this to work. */
+	v = dlsym(RTLD_NEXT, fname);
+	if (!v) {
+		fprintf(stderr, "locksmith handler error: dlsym error: %s\n",
+			dlerror());
+		return NULL;
+	}
+	return v;
+}
