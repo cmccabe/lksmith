@@ -296,8 +296,8 @@ static int test_take_sleeping_lock_while_holding_spin(void)
 	return 0;
 }
 
-static pthread_cond_t g_cond1 = PTHREAD_COND_INITIALIZER;
-static pthread_mutex_t g_cslock1 = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t g_cond1;
+static pthread_mutex_t g_cslock1;
 
 static int cond_signaller1(void)
 {
@@ -309,20 +309,36 @@ static int cond_signaller1(void)
 
 THREAD_WRAPPER_VOID(cond_signaller1);
 
-static int test_invalid_cond_wait(void)
+static int do_pthread_cond_wait(pthread_cond_t *__restrict cond,
+	pthread_mutex_t *__restrict mutex,
+	const struct timespec *__restrict ts)
+{
+	// The main reason for testing both pthread_cond_wait and
+	// pthread_cond_timedwait here is to shake out bugs in our usage of
+	// dlsym and friends.
+	if (!ts) {
+		return pthread_cond_wait(cond, mutex);
+	}
+	return pthread_cond_timedwait(cond, mutex, ts);
+}
+
+static int test_invalid_cond_wait(const struct timespec *ts)
 {
 	pthread_t thread;
 
+	EXPECT_ZERO(pthread_mutex_init(&g_cslock1, NULL));
+	EXPECT_ZERO(pthread_cond_init(&g_cond1, NULL));
+
 	/* We must not call pthread_cond_wait on a mutex we don't actually
 	 * hold. */
-	EXPECT_EQ(pthread_cond_wait(&g_cond1, &g_cslock1), EPERM);
+	EXPECT_EQ(do_pthread_cond_wait(&g_cond1, &g_cslock1, ts), EPERM);
 	EXPECT_EQ(find_recorded_error(EPERM), 1);
 
 	/* Here is an example of using the API correctly. */
 	EXPECT_ZERO(pthread_mutex_lock(&g_cslock1));
 	EXPECT_ZERO(pthread_create(&thread, NULL,
 		cond_signaller1_wrap, NULL));
-	EXPECT_EQ(pthread_cond_wait(&g_cond1, &g_cslock1), 0);
+	EXPECT_EQ(do_pthread_cond_wait(&g_cond1, &g_cslock1, ts), 0);
 	EXPECT_ZERO(pthread_mutex_unlock(&g_cslock1));
 	EXPECT_ZERO(pthread_join(thread, NULL));
 
@@ -336,6 +352,8 @@ static int test_invalid_cond_wait(void)
 
 int main(void)
 {
+	struct timespec ts;
+
 	set_error_cb(record_error);
 	EXPECT_ZERO(test_ab_inversion());
 	EXPECT_ZERO(test_destroy_while_same_thread_has_locked());
@@ -344,7 +362,11 @@ int main(void)
 	EXPECT_ZERO(test_big_inversion(3));
 	EXPECT_ZERO(test_big_inversion(100));
 	EXPECT_ZERO(test_take_sleeping_lock_while_holding_spin());
-	EXPECT_ZERO(test_invalid_cond_wait());
+	EXPECT_ZERO(test_invalid_cond_wait(NULL));
+	EXPECT_ZERO(test_invalid_cond_wait(NULL));
+	ts.tv_sec = 600;
+	ts.tv_nsec = 0;
+	EXPECT_ZERO(test_invalid_cond_wait(&ts));
 
 	return EXIT_SUCCESS;
 }
