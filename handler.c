@@ -93,6 +93,17 @@ static const int g_compatible_with_errcheck[] = {
 #define NUM_COMPATIBLE_WITH_ERRCHECK (sizeof(g_compatible_with_errcheck) / \
 	sizeof(g_compatible_with_errcheck[0]))
 
+/**
+ * Check if a pthreads mutex type can safely be converted to
+ * PTHREAD_MUTEX_ERRORCHECK.
+ *
+ * @param ty		The pthreads mutex type.
+ * @return		Nonzero if we could switch the mutex type to
+ *			PTHREAD_MUTEX_ERRORCHECK without changing the meaning
+ *			of a correct program.
+ *			We're conservative here: if we don't know about a mutex
+ *			type, we assume it's not compatible.
+ */
 static int is_compatible_with_errcheck(int ty)
 {
 	unsigned int i;
@@ -104,44 +115,54 @@ static int is_compatible_with_errcheck(int ty)
 	return 0;
 }
 
-static int pthread_mutex_init_errcheck(pthread_mutex_t *mutex)
+/**
+ * Initialize a pthread mutex as an error-checking mutex.
+ *
+ * @param lver		The version of pthread_mutex_init to use.
+ *			We use default versions of the other pthreads functions
+ *			we call (version 0 is the default.)
+ * @param mutex		The mutex to initialize.
+ *
+ * @return		0 on success; error code otherwise.
+ */
+static int pthread_mutex_init_errcheck(int lver, pthread_mutex_t *mutex)
 {
 	int ret;
 	pthread_mutexattr_t attr;
 
-	ret = pthread_mutexattr_init(&attr);
+	ret = r_pthread_mutexattr_init[0](&attr);
 	if (ret) {
 		lksmith_error(ret, "pthread_mutexattr_init failed "
 			"with error code %d: %s\n", ret, terror(ret));
 		goto done;
 	}
-	ret = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+	ret = r_pthread_mutexattr_settype[0](&attr, PTHREAD_MUTEX_ERRORCHECK);
 	if (ret) {
 		lksmith_error(ret, "pthread_mutexattr_settype failed "
 			"with error code %d: %s\n", ret, terror(ret));
 		goto done_free_mutexattr;
 	}
-	ret = r_pthread_mutex_init(mutex, &attr);
+	ret = r_pthread_mutex_init[lver](mutex, &attr);
 	if (ret) {
 		lksmith_error(ret, "pthread_mutex_init failed "
 			"with error code %d: %s\n", ret, terror(ret));
 		goto done_free_mutexattr;
 	}
 done_free_mutexattr:
-	pthread_mutexattr_destroy(&attr);
+	r_pthread_mutexattr_destroy[0](&attr);
 done:
 	return ret;
 }
 
-static int pthread_mutex_real_init(pthread_mutex_t *mutex,
-			pthread_mutexattr_t *attr)
+static int pthread_mutex_real_init(int lver,
+		pthread_mutex_t *mutex, pthread_mutexattr_t *attr)
 {
 	int ret, ty = 0;
 
 	if (!attr) {
 		/* No mutex attributes provided.  Initialize this as an error
 		 * checking mutex. */
-		return pthread_mutex_init_errcheck(mutex);
+		return pthread_mutex_init_errcheck(lver, mutex);
 	}
 	ret = pthread_mutexattr_gettype(attr, &ty);
 	if (ret == EINVAL) {
@@ -161,7 +182,7 @@ static int pthread_mutex_real_init(pthread_mutex_t *mutex,
 			return ret;
 		}
 	}
-	ret = r_pthread_mutex_init(mutex, attr);
+	ret = r_pthread_mutex_init[lver](mutex, attr);
 	if (ret) {
 		lksmith_error(ret, "pthread_mutex_init failed "
 			"with error code %d: %s\n", ret, terror(ret));
@@ -170,7 +191,7 @@ static int pthread_mutex_real_init(pthread_mutex_t *mutex,
 	return ret;
 }
 
-int pthread_mutex_init(pthread_mutex_t *mutex,
+int h_pthread_mutex_init(int lver, pthread_mutex_t *mutex,
 	const pthread_mutexattr_t *attr)
 {
 	int ret;
@@ -193,7 +214,7 @@ int pthread_mutex_init(pthread_mutex_t *mutex,
 	 * pthread_mutexattr_init, which modifies it.  There is no static
 	 * initializer provided for pthread_mutexattr_t.
 	 */
-	ret = pthread_mutex_real_init(mutex, (pthread_mutexattr_t*)attr);
+	ret = pthread_mutex_real_init(lver, mutex, (pthread_mutexattr_t*)attr);
 	if (ret) {
 		lksmith_destroy((const void*)mutex);
 		return ret;
@@ -201,7 +222,7 @@ int pthread_mutex_init(pthread_mutex_t *mutex,
 	return 0;
 }
 
-int pthread_mutex_destroy(pthread_mutex_t *mutex)
+int h_pthread_mutex_destroy(int lver, pthread_mutex_t *mutex)
 {
 	int ret;
 
@@ -216,46 +237,46 @@ int pthread_mutex_destroy(pthread_mutex_t *mutex)
 		 */
 		return ret;
 	}
-	return r_pthread_mutex_destroy(mutex);
+	return r_pthread_mutex_destroy[lver](mutex);
 }
 
-int pthread_mutex_trylock(pthread_mutex_t *mutex)
+int h_pthread_mutex_trylock(int lver, pthread_mutex_t *mutex)
 {
 	int ret = lksmith_prelock(mutex, 1);
 	if (ret)
 		return ret;
-	ret = r_pthread_mutex_trylock(mutex);
+	ret = r_pthread_mutex_trylock[lver](mutex);
 	lksmith_postlock(mutex, ret);
 	return ret;
 }
 
-int pthread_mutex_lock(pthread_mutex_t *mutex)
+int h_pthread_mutex_lock(int lver, pthread_mutex_t *mutex)
 {
 	int ret = lksmith_prelock(mutex, 1);
 	if (ret)
 		return ret;
-	ret = r_pthread_mutex_lock(mutex);
+	ret = r_pthread_mutex_lock[lver](mutex);
 	lksmith_postlock(mutex, ret);
 	return ret;
 }
 
-int pthread_mutex_timedlock(pthread_mutex_t *__restrict mutex,
+int h_pthread_mutex_timedlock(int lver, pthread_mutex_t *__restrict mutex,
 		__const struct timespec *__restrict ts)
 {
 	int ret = lksmith_prelock(mutex, 1);
 	if (ret)
 		return ret;
-	ret = r_pthread_mutex_timedlock(mutex, ts);
+	ret = r_pthread_mutex_timedlock[lver](mutex, ts);
 	lksmith_postlock(mutex, ret);
 	return ret;
 }
 
-int pthread_mutex_unlock(pthread_mutex_t *__restrict mutex)
+int h_pthread_mutex_unlock(int lver, pthread_mutex_t *__restrict mutex)
 {
 	int ret = lksmith_preunlock(mutex);
 	if (ret)
 		return ret;
-	ret = r_pthread_mutex_unlock(mutex);
+	ret = r_pthread_mutex_unlock(lver, mutex);
 	if (ret)
 		return ret;
 	lksmith_postunlock(mutex);
@@ -263,14 +284,14 @@ int pthread_mutex_unlock(pthread_mutex_t *__restrict mutex)
 }
 
 // TODO: pthread_rwlock stuff
-int pthread_spin_init(pthread_spinlock_t *lock, int pshared)
+int h_pthread_spin_init(int lver, pthread_spinlock_t *lock, int pshared)
 {
 	int ret;
 
 	ret = lksmith_optional_init((const void*)lock, 0);
 	if (ret)
 		return ret;
-	ret = r_pthread_spin_init(lock, pshared);
+	ret = r_pthread_spin_init[lver](lock, pshared);
 	if (ret) {
 		lksmith_destroy((const void*)lock);
 		return ret;
@@ -278,42 +299,42 @@ int pthread_spin_init(pthread_spinlock_t *lock, int pshared)
 	return 0;
 }
 
-int pthread_spin_destroy(pthread_spinlock_t *lock)
+int h_pthread_spin_destroy(int lver, pthread_spinlock_t *lock)
 {
 	int ret;
 
 	ret = lksmith_destroy((const void*)lock);
 	if (ret)
 		return ret;
-	return r_pthread_spin_destroy(lock);
+	return r_pthread_spin_destroy[lver](lock);
 }
 
-int pthread_spin_lock(pthread_spinlock_t *lock)
+int h_pthread_spin_lock(int lver, pthread_spinlock_t *lock)
 {
 	int ret = lksmith_prelock((const void*)lock, 0);
 	if (ret)
 		return ret;
-	ret = r_pthread_spin_lock(lock);
+	ret = r_pthread_spin_lock[lver](lock);
 	lksmith_postlock((const void*)lock, ret);
 	return ret;
 }
 
-int pthread_spin_trylock(pthread_spinlock_t *lock)
+int h_pthread_spin_trylock(int lver, pthread_spinlock_t *lock)
 {
 	int ret = lksmith_prelock((const void*)lock, 0);
 	if (ret)
 		return ret;
-	ret = r_pthread_spin_trylock(lock);
+	ret = r_pthread_spin_trylock[lver](lock);
 	lksmith_postlock((const void*)lock, ret);
 	return ret;
 }
 
-int pthread_spin_unlock(pthread_spinlock_t *lock)
+int h_pthread_spin_unlock(int lver, pthread_spinlock_t *lock)
 {
 	int ret = lksmith_preunlock((const void*)lock);
 	if (ret)
 		return ret;
-	ret = r_pthread_spin_unlock(lock);
+	ret = r_pthread_spin_unlock[lver](lock);
 	if (ret)
 		return ret;
 	lksmith_postunlock((const void*)lock);

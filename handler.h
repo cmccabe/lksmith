@@ -33,39 +33,6 @@
 #include <pthread.h>
 
 /******************************************************************
- * The raw pthreads functions.
- *****************************************************************/
-#ifndef LKSMITH_HANDLER_DOT_C
-#define EXTERN extern
-#else
-#define EXTERN
-#endif
-
-EXTERN int (*r_pthread_mutex_init)(pthread_mutex_t *mutex,
-	const pthread_mutexattr_t *attr);
-
-EXTERN int (*r_pthread_mutex_destroy)(pthread_mutex_t *mutex);
-
-EXTERN int (*r_pthread_mutex_trylock)(pthread_mutex_t *mutex);
-
-EXTERN int (*r_pthread_mutex_lock)(pthread_mutex_t *mutex);
-
-EXTERN int (*r_pthread_mutex_timedlock)(pthread_mutex_t *__restrict mutex,
-	__const struct timespec *__restrict ts);
-
-EXTERN int (*r_pthread_mutex_unlock)(pthread_mutex_t *__restrict mutex);
-
-EXTERN int (*r_pthread_spin_init)(pthread_spinlock_t *lock, int pshared);
-
-EXTERN int (*r_pthread_spin_destroy)(pthread_spinlock_t *lock);
-
-EXTERN int (*r_pthread_spin_lock)(pthread_spinlock_t *lock);
-
-EXTERN int (*r_pthread_spin_trylock)(pthread_spinlock_t *lock);
-
-EXTERN int (*r_pthread_spin_unlock)(pthread_spinlock_t *lock);
-
-/******************************************************************
  * Functions
  *****************************************************************/
 int lksmith_handler_init(void);
