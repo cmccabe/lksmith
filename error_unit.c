@@ -364,8 +364,9 @@ int main(void)
 	EXPECT_ZERO(test_take_sleeping_lock_while_holding_spin());
 	EXPECT_ZERO(test_invalid_cond_wait(NULL));
 	EXPECT_ZERO(test_invalid_cond_wait(NULL));
-	ts.tv_sec = 600;
-	ts.tv_nsec = 0;
+
+	clock_gettime(CLOCK_REALTIME, &ts);
+	ts.tv_sec += 600;
 	EXPECT_ZERO(test_invalid_cond_wait(&ts));
 
 	return EXIT_SUCCESS;
