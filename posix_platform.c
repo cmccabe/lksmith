@@ -27,9 +27,11 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "platform/platform.h"
+#include "platform.h"
 
+#include <dlfcn.h>
 #include <inttypes.h>
+#include <stdio.h>
 #include <sys/syscall.h>
 
 static uint64_t g_tid;

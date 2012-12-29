@@ -30,6 +30,8 @@
 #ifndef LKSMITH_ERROR_H
 #define LKSMITH_ERROR_H
 
+#include <errno.h>
+
 /**
  * The type signature for a Locksmith error reporting callback.
  *
@@ -62,5 +64,12 @@ void lksmith_error(int err, const char *fmt, ...)
  *			string. 
  */
 const char *terror(int err);
+
+/*
+ * If we don't have ELIBACC, use EIO instead.
+ */
+#ifndef ELIBACC
+#define ELIBACC EIO
+#endif
 
 #endif

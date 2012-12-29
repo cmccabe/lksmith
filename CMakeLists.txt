@@ -60,15 +60,16 @@ endif()
 add_library(lksmith SHARED
     ${PLATFORM_FILE}
     error.c
-    linux_platform.c
     lksmith.c
     handler.c
     util.c
 )
 
-target_link_libraries(lksmith dl pthread)
-INSTALL(TARGETS lksmith
-    LIBRARY DESTINATION lib)
+target_link_libraries(lksmith pthread)
+INSTALL(TARGETS lksmith LIBRARY DESTINATION lib)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+    target_link_libraries(lksmith dl)
+endif()
 
 add_executable(thread_unit test.c thread_unit.c test.c mem.c)
 target_link_libraries(thread_unit lksmith)

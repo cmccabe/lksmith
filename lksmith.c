@@ -672,7 +672,7 @@ void lksmith_postlock(const void *ptr, int error)
 	r_pthread_mutex_lock(&g_tree_lock);
 	lk = lksmith_find(ptr);
 	if (!lk) {
-		lksmith_error(EBADE, "lksmith_postlock(lock=%p, thread=%s): "
+		lksmith_error(EIO, "lksmith_postlock(lock=%p, thread=%s): "
 			"logic error: prelock didn't create the lock data?\n",
 			ptr, tls->name);
 		goto done_unlock;
@@ -755,7 +755,7 @@ void lksmith_postunlock(const void *ptr)
 	}
 	ret = tls_remove_held(tls, ptr);
 	if (ret) {
-		lksmith_error(EBADE, "lksmith_postunlock(lock=%p, "
+		lksmith_error(EIO, "lksmith_postunlock(lock=%p, "
 			"thread=%s): logic error: preunlock check told us "
 			"we had the lock, but we don't?\n", ptr, tls->name);
 		return;
@@ -763,7 +763,7 @@ void lksmith_postunlock(const void *ptr)
 	r_pthread_mutex_lock(&g_tree_lock);
 	lk = lksmith_find(ptr);
 	if (!lk) {
-		lksmith_error(EBADE, "lksmith_preunlock(lock=%p, thread=%s): "
+		lksmith_error(EIO, "lksmith_preunlock(lock=%p, thread=%s): "
 			"logic error: attempted to unlock an unknown lock.\n",
 			ptr, tls->name);
 		r_pthread_mutex_unlock(&g_tree_lock);
