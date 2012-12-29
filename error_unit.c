@@ -37,6 +37,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/time.h>
 
 #define THREAD_WRAPPER_VOID(fn) \
 static void *fn##_wrap(void *v __attribute__((unused))) { \
@@ -365,7 +366,7 @@ int main(void)
 	EXPECT_ZERO(test_invalid_cond_wait(NULL));
 	EXPECT_ZERO(test_invalid_cond_wait(NULL));
 
-	clock_gettime(CLOCK_REALTIME, &ts);
+	get_current_timespec(&ts);
 	ts.tv_sec += 600;
 	EXPECT_ZERO(test_invalid_cond_wait(&ts));
 
