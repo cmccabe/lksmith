@@ -67,6 +67,7 @@ details.
 
 TODO
 -------------------------------------------------------------
+* Expose the lock APIs to client code.  This will make Locksmith usable in code that implements its own locking primitives.
 * Support pthread rwlocks
 * Support pthread barriers
 * Add the ability to dump out debugging information about the state of all locks on command.
