@@ -79,14 +79,23 @@ uint32_t lksmith_get_version(void);
 int lksmith_verion_to_str(uint32_t ver, char *str, size_t str_len);
 
 /**
+ * Initialize thread-local storage and function stubs.
+ * TODO: move this to internal header.
+ *
+ * @return		0 on success; negative error code otherwise.
+ */
+int init_tls(void);
+
+/**
  * Initialize a locksmith lock.  This function is optional.
  *
  * @param ptr		pointer to the lock to initialize
+ * @param recursive	1 to allow recursive locks; 0 otherwise
  * @param sleeper	1 if this lock is a sleeper; 0 otherwise
  *
  * @return		0 on success; error code otherwise
  */
-int lksmith_optional_init(const void *ptr, int sleeper);
+int lksmith_optional_init(const void *ptr, int recursive, int sleeper);
 
 /**
  * Destroy a lock.

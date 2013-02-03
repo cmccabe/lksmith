@@ -47,11 +47,13 @@
 /******************************************************************
  *  Locksmith private data structures
  *****************************************************************/
-#define MAX_NLOCK 0x3fffffffffffffffULL
+#define MAX_NLOCK 0x1fffffffffffffffULL
 
 struct lksmith_lock_props {
 	/** The number of times this mutex has been locked. */
-	uint64_t nlock : 62;
+	uint64_t nlock : 61;
+	/** 1 if we should allow recursive locks. */
+	uint64_t recursive : 1;
 	/** 1 if this mutex is a sleeping lock */
 	uint64_t sleeper : 1;
 	/** 1 if we have already warned about taking this lock while
@@ -262,6 +264,16 @@ static struct lksmith_tls *get_or_create_tls(void)
 	return tls;
 }
 
+int init_tls(void)
+{
+	struct lksmith_tls *tls;
+	
+	tls = get_or_create_tls();
+	if (!tls)
+		return -ENOMEM;
+	return 0;
+}
+
 /**
  * Add a lock ID to the end of the list of lock IDs we hold.
  *
@@ -453,9 +465,11 @@ static void lk_dump(const struct lksmith_lock *lk,
 	const char *prefix = "";
 
 	fwdprintf(buf, off, buf_len, "lk{ptr=%p "
-		  "nlock=%"PRId64", sleeper=%d, color=%"PRId64", refcnt=%d, "
-		  "before={", (void*)lk->ptr, (uint64_t)lk->props.nlock,
-		  lk->props.sleeper, lk->color, lk->refcnt);
+		"nlock=%"PRId64", recursive=%d, sleeper=%d,"
+		"color=%"PRId64", refcnt=%d, "
+		"before={", (void*)lk->ptr, (uint64_t)lk->props.nlock,
+		lk->props.recursive, lk->props.sleeper,
+		lk->color, lk->refcnt);
 	for (i = 0; i < lk->before_size; i++) {
 		fwdprintf(buf, off, buf_len, "%s%p",
 			  prefix, lk->before[i]);
@@ -481,8 +495,8 @@ static void tree_print(void)
 	fprintf(stderr, "\n}\n");
 }
 
-static int lksmith_insert(const void *ptr, int sleeper,
-		struct lksmith_lock **lk)
+static int lksmith_insert(const void *ptr, int recursive,
+		int sleeper, struct lksmith_lock **lk)
 {
 	struct lksmith_lock *ak, *bk;
 	ak = calloc(1, sizeof(*ak));
@@ -490,6 +504,7 @@ static int lksmith_insert(const void *ptr, int sleeper,
 		return ENOMEM;
 	}
 	ak->ptr = ptr;
+	ak->props.recursive = !!recursive;
 	ak->props.sleeper = !!sleeper;
 	bk = RB_INSERT(lock_tree, &g_tree, ak);
 	if (bk) {
@@ -511,7 +526,7 @@ static struct lksmith_lock *lksmith_find(const void *ptr)
 /******************************************************************
  *  API functions
  *****************************************************************/
-int lksmith_optional_init(const void *ptr, int sleeper)
+int lksmith_optional_init(const void *ptr, int recursive, int sleeper)
 {
 	struct lksmith_tls *tls;
 	struct lksmith_lock *lk;
@@ -524,7 +539,7 @@ int lksmith_optional_init(const void *ptr, int sleeper)
 		return ENOMEM;
 	}
 	r_pthread_mutex_lock(&g_tree_lock);
-	ret = lksmith_insert(ptr, sleeper, &lk);
+	ret = lksmith_insert(ptr, recursive, sleeper, &lk);
 	r_pthread_mutex_unlock(&g_tree_lock);
 	if (ret) {
 		lksmith_error(ret, "lksmith_optional_init(lock=%p, "
@@ -620,7 +635,12 @@ int lksmith_prelock(const void *ptr, int sleeper)
 	r_pthread_mutex_lock(&g_tree_lock);
 	lk = lksmith_find(ptr);
 	if (!lk) {
-		ret = lksmith_insert(ptr, sleeper, &lk);
+		/* If the lock hasn't been explicitly initialized using
+		 * lksmith_optional_init, we allow it to be recursive.
+		 * It might have been statically initialized with
+		 * PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP.
+		 */
+		ret = lksmith_insert(ptr, 1, sleeper, &lk);
 		if (ret) {
 			lksmith_error(ret, "lksmith_prelock(lock=%p, "
 				"thread=%s): failed to allocate lock data: "
@@ -639,9 +659,12 @@ int lksmith_prelock(const void *ptr, int sleeper)
 			continue;
 		}
 		if (ak == lk) {
-			// TODO: if the mutex is identified as non-recursive,
-			// complain here about the deadlock which is about to
-			// happen.
+			if (ak->props.recursive)
+				continue;
+			lksmith_error(EDEADLK, "lksmith_prelock(lock=%p, "
+				"thread=%s): this thread already holds "
+				"this lock, and it is not a recursive lock.\n",
+				ptr, tls->name);
 			continue;
 		}
 		ret = lksmith_search(ak, ptr);

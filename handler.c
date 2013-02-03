@@ -107,10 +107,11 @@ done:
 }
 
 static int pthread_mutex_real_init(pthread_mutex_t *mutex,
-			pthread_mutexattr_t *attr)
+			pthread_mutexattr_t *attr, int *recursive)
 {
 	int ret, ty = 0;
 
+	*recursive = 0;
 	if (!attr) {
 		/* No mutex attributes provided.  Initialize this as an error
 		 * checking mutex. */
@@ -133,6 +134,11 @@ static int pthread_mutex_real_init(pthread_mutex_t *mutex,
 				"with error code %d: %s\n", ret, terror(ret));
 			return ret;
 		}
+	} else {
+		/* If we don't know about the requested mutex type, we assume
+		 * that it's recursive, to be on the safe side.
+		 */
+		*recursive = 1;
 	}
 	ret = r_pthread_mutex_init(mutex, attr);
 	if (ret) {
@@ -146,11 +152,12 @@ static int pthread_mutex_real_init(pthread_mutex_t *mutex,
 int pthread_mutex_init(pthread_mutex_t *mutex,
 	const pthread_mutexattr_t *attr)
 {
-	int ret;
+	int ret, recursive = 0;
 
-	ret = lksmith_optional_init((const void*)mutex, 1);
+	ret = init_tls();
 	if (ret)
 		return ret;
+
 	/*
 	 * We have to cast away the const here, because the alternative,
 	 * copying the pthread_mutexattr_t, is not feasible.
@@ -166,9 +173,13 @@ int pthread_mutex_init(pthread_mutex_t *mutex,
 	 * pthread_mutexattr_init, which modifies it.  There is no static
 	 * initializer provided for pthread_mutexattr_t.
 	 */
-	ret = pthread_mutex_real_init(mutex, (pthread_mutexattr_t*)attr);
+	ret = pthread_mutex_real_init(mutex, (pthread_mutexattr_t*)attr,
+					&recursive);
+	if (ret)
+		return ret;
+	ret = lksmith_optional_init((const void*)mutex, recursive, 1);
 	if (ret) {
-		lksmith_destroy((const void*)mutex);
+		pthread_mutex_destroy(mutex);
 		return ret;
 	}
 	return 0;
@@ -240,7 +251,7 @@ int pthread_spin_init(pthread_spinlock_t *lock, int pshared)
 {
 	int ret;
 
-	ret = lksmith_optional_init((const void*)lock, 0);
+	ret = lksmith_optional_init((const void*)lock, 0, 0);
 	if (ret)
 		return ret;
 	ret = r_pthread_spin_init(lock, pshared);

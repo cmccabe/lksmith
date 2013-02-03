@@ -351,6 +351,24 @@ static int test_invalid_cond_wait(const struct timespec *ts)
 	return 0;
 }
 
+static int test_recursion_on_nonrecursive(void)
+{
+	pthread_mutexattr_t attr;
+	pthread_mutex_t mutex;
+	int ty = PTHREAD_MUTEX_NORMAL;
+
+	EXPECT_ZERO(pthread_mutexattr_init(&attr));
+	EXPECT_ZERO(pthread_mutexattr_settype(&attr, ty));
+	EXPECT_ZERO(pthread_mutex_init(&mutex, &attr));
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_EQ(pthread_mutex_trylock(&mutex), EBUSY);
+	EXPECT_EQ(find_recorded_error(EDEADLK), 1);
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutexattr_destroy(&attr));
+	EXPECT_ZERO(pthread_mutex_destroy(&mutex));
+	return 0;
+}
+
 int main(void)
 {
 	struct timespec ts;
@@ -369,6 +387,8 @@ int main(void)
 	get_current_timespec(&ts);
 	ts.tv_sec += 600;
 	EXPECT_ZERO(test_invalid_cond_wait(&ts));
+
+	EXPECT_ZERO(test_recursion_on_nonrecursive());
 
 	return EXIT_SUCCESS;
 }
