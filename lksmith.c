@@ -638,6 +638,12 @@ int lksmith_prelock(const void *ptr, int sleeper)
 				ptr, tls->name, held);
 			continue;
 		}
+		if (ak == lk) {
+			// TODO: if the mutex is identified as non-recursive,
+			// complain here about the deadlock which is about to
+			// happen.
+			continue;
+		}
 		ret = lksmith_search(ak, ptr);
 		if (ret) {
 			lksmith_error(EDEADLK, "lksmith_prelock(lock=%p, "

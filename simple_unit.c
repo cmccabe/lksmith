@@ -100,6 +100,23 @@ static int test_spin_lock_simple(void)
 	return 0;
 }
 
+static int test_recursive_mutex(void)
+{
+	pthread_mutexattr_t attr;
+	pthread_mutex_t mutex;
+	int ty = PTHREAD_MUTEX_RECURSIVE;
+
+	EXPECT_ZERO(pthread_mutexattr_init(&attr));
+	EXPECT_ZERO(pthread_mutexattr_settype(&attr, ty));
+	EXPECT_ZERO(pthread_mutex_init(&mutex, &attr));
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_ZERO(pthread_mutex_lock(&mutex));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutex_unlock(&mutex));
+	EXPECT_ZERO(pthread_mutexattr_destroy(&attr));
+	EXPECT_ZERO(pthread_mutex_destroy(&mutex));
+	return 0;
+}
 
 int main(void)
 {
@@ -111,6 +128,7 @@ int main(void)
 	EXPECT_ZERO(test_mutex_lock_simple());
 	EXPECT_ZERO(test_mutex_lock_simple_static());
 	EXPECT_ZERO(test_spin_lock_simple());
+	EXPECT_ZERO(test_recursive_mutex());
 
 	return EXIT_SUCCESS;
 }
