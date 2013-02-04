@@ -95,7 +95,9 @@ struct lksmith_tls {
 	/** Unsorted list of locks held */
 	const void **held;
 	/** Number of spin locks currently held. */
-	uint64_t num_spins;
+	uint64_t num_spins : 63;
+	/** 1 if we should intercept pthreads calls; 0 otherwise */
+	uint64_t intercept : 1;
 	/** Scratch area used for taking backtraces. */
 	void *scratch[LKSMITH_BACKTRACE_MAX];
 };
@@ -262,6 +264,7 @@ static struct lksmith_tls *get_or_create_tls(void)
 			"memory for thread-local storage.\n");
 		return NULL;
 	}
+	tls->intercept = 1;
 	platform_create_thread_name(tls->name, LKSMITH_THREAD_NAME_MAX);
 	ret = pthread_setspecific(g_tls_key, tls);
 	if (ret) {
@@ -393,8 +396,7 @@ static int platform_create_backtrace(void **scratch, int scratch_len,
 	void **frames;
 	int len;
 
-	//len = backtrace(scratch, scratch_len);
-	len = 0;
+	len = backtrace(scratch, scratch_len);
 	frames = malloc(sizeof(void*) * (len + 1));
 	if (!frames)
 		return ENOMEM;
@@ -427,14 +429,17 @@ static int platform_create_backtrace(void **scratch __attribute__((unused)),
 static struct lksmith_holder* holder_create(struct lksmith_tls *tls)
 {
 	struct lksmith_holder *holder;
-	int ret;
+	int intercept, ret;
 
 	holder = calloc(1, sizeof(*holder));
 	if (!holder)
 		return NULL;
 	snprintf(holder->name, sizeof(holder->name), "%s", tls->name); 
+	intercept = tls->intercept;
+	tls->intercept = 0;
 	ret = platform_create_backtrace(tls->scratch, LKSMITH_BACKTRACE_MAX,
 			&holder->frames);
+	tls->intercept = intercept;
 	if (ret) {
 		free(holder);
 		return NULL;
@@ -714,6 +719,8 @@ int lksmith_optional_init(const void *ptr, int recursive, int sleeper)
 			"failed to allocate thread-local storage.\n", ptr);
 		return ENOMEM;
 	}
+	if (!tls->intercept)
+		return 0;
 	r_pthread_mutex_lock(&g_tree_lock);
 	ret = lksmith_insert(ptr, recursive, sleeper, &lk);
 	r_pthread_mutex_unlock(&g_tree_lock);
@@ -739,6 +746,8 @@ int lksmith_destroy(const void *ptr)
 		ret = ENOMEM;
 		goto done;
 	}
+	if (!tls->intercept)
+		return 0;
 	r_pthread_mutex_lock(&g_tree_lock);
 	lk = lksmith_find(ptr);
 	if (!lk) {
@@ -809,6 +818,8 @@ int lksmith_prelock(const void *ptr, int sleeper)
 		ret = ENOMEM;
 		goto done;
 	}
+	if (!tls->intercept)
+		return 0;
 	holder = holder_create(tls);
 	if (!holder) {
 		lksmith_error(ENOMEM, "lksmith_prelock(lock=%p): failed to "
@@ -886,6 +897,8 @@ void lksmith_postlock(const void *ptr, int error)
 			"to allocate thread-local storage.\n", ptr);
 		goto done;
 	}
+	if (!tls->intercept)
+		return;
 	r_pthread_mutex_lock(&g_tree_lock);
 	lk = lksmith_find(ptr);
 	if (!lk) {
@@ -935,6 +948,8 @@ int lksmith_preunlock(const void *ptr)
 			"to allocate thread-local storage.\n", ptr);
 		return ENOMEM;
 	}
+	if (!tls->intercept)
+		return 0;
 	r_pthread_mutex_lock(&g_tree_lock);
 	lk = lksmith_find(ptr);
 	if (!lk) {
@@ -969,6 +984,8 @@ void lksmith_postunlock(const void *ptr)
 			"to allocate thread-local storage.\n", ptr);
 		return;
 	}
+	if (!tls->intercept)
+		return;
 	ret = tls_remove_held(tls, ptr);
 	if (ret) {
 		lksmith_error(EIO, "lksmith_postunlock(lock=%p, "
@@ -1007,6 +1024,8 @@ int lksmith_check_locked(const void *ptr)
 			"to allocate thread-local storage.\n", ptr);
 		return ENOMEM;
 	}
+	if (!tls->intercept)
+		return 0;
 	return tls_contains_lid(tls, ptr) ? 0 : -1;
 }
 
