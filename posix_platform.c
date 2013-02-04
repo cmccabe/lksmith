@@ -46,7 +46,7 @@ void platform_create_thread_name(char * __restrict out, size_t out_len)
 	 * with an atomic variable.
 	 */
 	new_tid = __sync_add_and_fetch(&g_tid, 1);
-	snprintf(out, out_len, "thread %"PRId64, new_tid);
+	snprintf(out, out_len, "thread_%"PRId64, new_tid);
 }
 
 void* get_dlsym_next(const char *fname)

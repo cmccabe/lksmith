@@ -43,7 +43,7 @@ void platform_create_thread_name(char * __restrict out, size_t out_len)
 	 * this thread.  This is preferrable to making up our own number, since
 	 * other debugging tools can also examine the kernel thread ID. */
 	pid_t tid = (pid_t)syscall(SYS_gettid);
-	snprintf(out, out_len, "thread %"PRId64, (uint64_t)tid);
+	snprintf(out, out_len, "thread_%"PRId64, (uint64_t)tid);
 }
 
 void* get_dlsym_next(const char *fname)
