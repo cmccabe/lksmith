@@ -35,6 +35,7 @@
 #include "tree.h"
 #include "util.h"
 
+#include <execinfo.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <pthread.h>
@@ -48,6 +49,7 @@
  *  Locksmith private data structures
  *****************************************************************/
 #define MAX_NLOCK 0x1fffffffffffffffULL
+#define LKSMITH_BACKTRACE_MAX 256
 
 struct lksmith_lock_props {
 	/** The number of times this mutex has been locked. */
@@ -61,6 +63,15 @@ struct lksmith_lock_props {
 	uint64_t spin_warn : 1;
 };
 
+struct lksmith_holder {
+	/** Name of the thread holding the lock */
+	char name[LKSMITH_THREAD_NAME_MAX];
+	/** Stack frames */
+	void** frames;
+	/** Next in singly-linked list */
+	struct lksmith_holder *next;
+};
+
 struct lksmith_lock {
 	RB_ENTRY(lksmith_lock) entry;
 	/** The lock pointer */
@@ -68,8 +79,8 @@ struct lksmith_lock {
 	struct lksmith_lock_props props;
 	/** The color that this node has been painted (used in traversal) */
 	uint64_t color;
-	/** Reference count for this lock */
-	int refcnt;
+	/** Lock holders */
+	struct lksmith_holder *holders;
 	/** Size of the before list. */
 	int before_size;
 	/** list of locks that have been taken before this lock */
@@ -85,6 +96,8 @@ struct lksmith_tls {
 	const void **held;
 	/** Number of spin locks currently held. */
 	uint64_t num_spins;
+	/** Scratch area used for taking backtraces. */
+	void *scratch[LKSMITH_BACKTRACE_MAX];
 };
 
 /******************************************************************
@@ -95,6 +108,7 @@ static int lksmith_lock_compare(const struct lksmith_lock *a,
 RB_HEAD(lock_tree, lksmith_lock);
 RB_GENERATE(lock_tree, lksmith_lock, entry, lksmith_lock_compare);
 static void lksmith_tls_destroy(void *v);
+static void lk_dump_to_stderr(struct lksmith_lock *lk) __attribute__((unused));
 static void tree_print(void) __attribute__((unused));
 
 /******************************************************************
@@ -346,6 +360,100 @@ static int tls_contains_lid(struct lksmith_tls *tls, const void *ptr)
 }
 
 /******************************************************************
+ *  Lock holder functions
+ *****************************************************************/
+/**
+ * Dump out the contents of a lock holder structure
+ *
+ * @param holder        The lock holder
+ * @param buf		(out param) the buffer to write to
+ * @param off		(inout param) current position in the buffer
+ * @param buf_len	length of buf
+ */
+static void holder_dump(const struct lksmith_holder *holder,
+		char *buf, size_t *off, size_t buf_len)
+{
+	const char *prefix = "";
+	void **v;
+
+	fwdprintf(buf, off, buf_len, "{name=%s, "
+		"frames=[", holder->name);
+	for (v = holder->frames; *v; v++) {
+		fwdprintf(buf, off, buf_len, "%s%p",
+			  prefix, *v);
+		prefix = ", ";
+	}
+	fwdprintf(buf, off, buf_len, "]}");
+}
+
+#ifdef HAVE_BACKTRACE_FUNCTION
+static int platform_create_backtrace(void **scratch, int scratch_len,
+				void ***out)
+{
+	void **frames;
+	int len;
+
+	//len = backtrace(scratch, scratch_len);
+	len = 0;
+	frames = malloc(sizeof(void*) * (len + 1));
+	if (!frames)
+		return ENOMEM;
+	memcpy(frames, scratch, len * sizeof(void*));
+	frames[len] = NULL;
+	*out = frames;
+	return 0;
+}
+#else
+static int platform_create_backtrace(void **scratch __attribute__((unused)),
+	int scratch_len __attribute__((unused)), void ***out)
+{
+	void **frames;
+
+	frames = calloc(1, sizeof(void*));
+	if (!frames)
+		return ENOMEM;
+	*out = frames;
+	return 0;
+}
+#endif
+
+/**
+ * Create a lock holder.
+ *
+ * @param tls		The thread-local storage for the current thread.
+ *
+ * @return		The lock holder on success; NULL otherwise.
+ */
+static struct lksmith_holder* holder_create(struct lksmith_tls *tls)
+{
+	struct lksmith_holder *holder;
+	int ret;
+
+	holder = calloc(1, sizeof(*holder));
+	if (!holder)
+		return NULL;
+	snprintf(holder->name, sizeof(holder->name), "%s", tls->name); 
+	ret = platform_create_backtrace(tls->scratch, LKSMITH_BACKTRACE_MAX,
+			&holder->frames);
+	if (ret) {
+		free(holder);
+		return NULL;
+	}
+	return holder;
+}
+
+/**
+ * Free a lock holder structure
+ *
+ * @param holder        The lock holder
+ */
+static void holder_free(struct lksmith_holder *holder)
+{
+	free(holder->frames);
+	free(holder);
+}
+
+/******************************************************************
  *  Lock functions
  *****************************************************************/
 static int lksmith_lock_compare(const struct lksmith_lock *a,
@@ -451,6 +559,53 @@ static void lk_remove_before(struct lksmith_lock *lk, struct lksmith_lock *ak)
 }
 
 /**
+ * Add a lock holder to the lock.
+ * Note: you must call this function with the info->lock held.
+ *
+ * @param lk		The lock data.
+ * @param holder	The lock holder to add.
+ */
+static void lk_holder_add(struct lksmith_lock *lk,
+			struct lksmith_holder *holder)
+{
+	holder->next = lk->holders;
+	lk->holders = holder;
+}
+
+/**
+ * Remove a lock holder from the lock.
+ * Note: you must call this function with the info->lock held.
+ *
+ * @param lk		The lock data.
+ * @param tls		The thread-local storage for the current thread.
+ *
+ * @return		0 on success; -ENOENT if the lock holder wasn't found.
+ */
+static int lk_holder_remove(struct lksmith_lock *lk,
+			struct lksmith_tls *tls)
+{
+	struct lksmith_holder **holder, *next;
+
+	/* By iterating forward through the list, we ensure that holders are
+	 * taken out in the reverse order that they were put in (since we also
+	 * insert to the head of the list.)  This is important when dealing
+	 * with recursive locks, where one thread can take the same lock over
+	 * and over. */
+	holder = &lk->holders;
+	while (*holder) {
+		if (!strcmp(tls->name, (*holder)->name))
+			break;
+		holder = &(*holder)->next;
+	}
+	if (!holder)
+		return -ENOENT;
+	next = (*holder)->next;
+	holder_free(*holder);
+	*holder = next;
+	return 0;
+}
+
+/**
  * Dump out the contents of a lock data structure.
  *
  * @param lk		The lock data
@@ -463,19 +618,39 @@ static void lk_dump(const struct lksmith_lock *lk,
 {
 	int i;
 	const char *prefix = "";
+	struct lksmith_holder *holder;
 
-	fwdprintf(buf, off, buf_len, "lk{ptr=%p "
+	fwdprintf(buf, off, buf_len, "lk{ptr=%p, "
 		"nlock=%"PRId64", recursive=%d, sleeper=%d,"
-		"color=%"PRId64", refcnt=%d, "
-		"before={", (void*)lk->ptr, (uint64_t)lk->props.nlock,
+		"color=%"PRId64", before={", 
+		(void*)lk->ptr, (uint64_t)lk->props.nlock,
 		lk->props.recursive, lk->props.sleeper,
-		lk->color, lk->refcnt);
+		lk->color);
 	for (i = 0; i < lk->before_size; i++) {
 		fwdprintf(buf, off, buf_len, "%s%p",
 			  prefix, lk->before[i]);
 		prefix = " ";
 	}
-	fwdprintf(buf, off, buf_len, "}}");
+	fwdprintf(buf, off, buf_len, "}, holders=[");
+	prefix = "";
+	holder = lk->holders;
+	while (holder) {
+		fwdprintf(buf, off, buf_len, "%s", prefix);
+		holder_dump(holder, buf, off, buf_len);
+		prefix = ", ";
+		holder = holder->next;
+	}
+	fwdprintf(buf, off, buf_len, "]}");
+}
+
+static void lk_dump_to_stderr(struct lksmith_lock *lk)
+{
+	char buf[16384];
+	size_t off = 0;
+
+	lk_dump(lk, buf, &off, sizeof(buf));
+	fputs(buf, stderr);
+	fputs("\n", stderr);
 }
 
 static void tree_print(void)
@@ -506,6 +681,7 @@ static int lksmith_insert(const void *ptr, int recursive,
 	ak->ptr = ptr;
 	ak->props.recursive = !!recursive;
 	ak->props.sleeper = !!sleeper;
+	ak->holders = NULL;
 	bk = RB_INSERT(lock_tree, &g_tree, ak);
 	if (bk) {
 		free(ak);
@@ -572,7 +748,7 @@ int lksmith_destroy(const void *ptr)
 		ret = ENOENT;
 		goto done_unlock;
 	}
-	if (lk->refcnt != 0) {
+	if (lk->holders != NULL) {
 		if (tls_contains_lid(tls, ptr) == 1) {
 			lksmith_error(EBUSY, "lksmith_destroy(lock=%p, "
 				"thread=%s): you must unlock this mutex "
@@ -624,11 +800,19 @@ int lksmith_prelock(const void *ptr, int sleeper)
 	struct lksmith_tls *tls;
 	int ret;
 	unsigned int i;
+	struct lksmith_holder *holder = NULL;
 
 	tls = get_or_create_tls();
 	if (!tls) {
 		lksmith_error(ENOMEM, "lksmith_prelock(lock=%p): failed to "
 			"allocate thread-local storage.\n", ptr);
+		ret = ENOMEM;
+		goto done;
+	}
+	holder = holder_create(tls);
+	if (!holder) {
+		lksmith_error(ENOMEM, "lksmith_prelock(lock=%p): failed to "
+			"allocate lock holder data.\n", ptr);
 		ret = ENOMEM;
 		goto done;
 	}
@@ -678,11 +862,15 @@ int lksmith_prelock(const void *ptr, int sleeper)
 		}
 		lk_add_before(lk, ak);
 	}
-	lk->refcnt++;
+	lk_holder_add(lk, holder);
+	holder = NULL;
 	ret = 0;
 done_unlock:
 	r_pthread_mutex_unlock(&g_tree_lock);
 done:
+	if (holder) {
+		holder_free(holder);
+	}
 	return ret;
 }
 
@@ -707,8 +895,7 @@ void lksmith_postlock(const void *ptr, int error)
 		goto done_unlock;
 	}
 	if (error) {
-		/* If the lock operation failed, decrement the refcnt. */
-		lk->refcnt--;
+		lk_holder_remove(lk, tls);
 		goto done_unlock;
 	}
 	if (lk->props.nlock < MAX_NLOCK) {
@@ -798,7 +985,15 @@ void lksmith_postunlock(const void *ptr)
 		r_pthread_mutex_unlock(&g_tree_lock);
 		return;
 	}
-	lk->refcnt--;
+	ret = lk_holder_remove(lk, tls);
+	if (ret) {
+		lksmith_error(EIO, "lksmith_preunlock(lock=%p, thread=%s): "
+			"logic error: failed to find backtrace for this "
+			"thread in the list of stored backtraces for this "
+			"lock (error %d).\n", ptr, tls->name, ret);
+		r_pthread_mutex_unlock(&g_tree_lock);
+		return;
+	}
 	r_pthread_mutex_unlock(&g_tree_lock);
 }
 

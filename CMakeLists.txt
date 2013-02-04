@@ -38,6 +38,8 @@ SET(CMAKE_INSTALL_PREFIX /usr/local)
 # scenarios.  This should always work on Linux.
 INCLUDE(CheckCSourceCompiles)
 CHECK_C_SOURCE_COMPILES("int main(void) { static __thread int i = 0; return 0; }" HAVE_IMPROVED_TLS)
+CHECK_C_SOURCE_COMPILES("#include <execinfo.h>
+int main(void) { return backtrace(0, 0); }" HAVE_BACKTRACE_FUNCTION)
 
 CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/config.h.cmake ${CMAKE_BINARY_DIR}/config.h)
 
