@@ -121,6 +121,19 @@ int find_recorded_error(int expect)
 	return found;
 }
 
+int num_recorded_errors(void)
+{
+	struct recorded_error *rec;
+	int num = 0;
+
+	r_pthread_mutex_lock(&g_recorded_errors_lock);
+	for (rec = g_recorded_errors; rec; rec = rec->next) {
+		num++;
+	}
+	r_pthread_mutex_unlock(&g_recorded_errors_lock);
+	return num;
+}
+
 int get_current_timespec(struct timespec *ts)
 {
 	struct timeval tv;

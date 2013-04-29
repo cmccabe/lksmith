@@ -74,6 +74,11 @@ void clear_recorded_errors(void);
 int find_recorded_error(int expect);
 
 /**
+ * @return		the number of recorded errors.
+ */
+int num_recorded_errors(void);
+
+/**
  * Get the current time
  *
  * @param ts		(out param) the current time

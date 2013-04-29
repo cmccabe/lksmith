@@ -162,7 +162,9 @@ static int g_num_ignored_frames;
  *****************************************************************/
 static int compare_strings(const void *a, const void *b)
 {
-	return strcmp((const char *)b, (const char *)a);
+	const char *sa = *(const char **)a;
+	const char *sb = *(const char **)b;
+	return strcmp(sa, sb);
 }
 
 static int lksmith_init_ignored_frames(char ***out, int *out_len)
@@ -1031,7 +1033,7 @@ static int should_skip_dependency_processing(struct lksmith_holder *holder)
 		const char *frame = holder->bt_frames[idx++];
 		if (!frame)
 			break;
-		match = bsearch(frame, g_ignored_frames, g_num_ignored_frames,
+		match = bsearch(&frame, g_ignored_frames, g_num_ignored_frames,
 				sizeof(char*), compare_strings);
 		if (match) {
 			return 1;
