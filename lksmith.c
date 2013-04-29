@@ -110,6 +110,8 @@ RB_GENERATE(lock_tree, lksmith_lock, entry, lksmith_lock_compare);
 static void lksmith_tls_destroy(void *v);
 static void lk_dump_to_stderr(struct lksmith_lock *lk) __attribute__((unused));
 static void tree_print(void) __attribute__((unused));
+static int compare_strings(const void *a, const void *b)
+	__attribute__((const));
 
 /******************************************************************
  *  Locksmith globals
@@ -145,9 +147,81 @@ struct lock_tree g_tree;
  */
 static uint64_t g_color;
 
+/**
+ * A sorted list of frames to ignore.
+ */
+static char **g_ignored_frames;
+
+/**
+ * The number of ignored frames.
+ */
+static int g_num_ignored_frames;
+
 /******************************************************************
  *  Initialization
  *****************************************************************/
+static int compare_strings(const void *a, const void *b)
+{
+	return strcmp((const char *)b, (const char *)a);
+}
+
+static int lksmith_init_ignored_frames(char ***out, int *out_len)
+{
+	int ret, num_ignored = 0;
+	const char *ignored_env;
+	char *ignored = NULL, **ignored_arr = 0, *saveptr = NULL;
+	const char *str;
+
+	ignored_env = getenv("LKSMITH_IGNORED_FRAMES");
+	if (!ignored_env) {
+		ret = 0;
+		goto done;
+	}
+	ignored = strdup(ignored_env);
+	if (!ignored) {
+		ret = ENOMEM;
+		goto done;
+	}
+	for (str = strtok_r(ignored, ":", &saveptr);
+			str; str = strtok_r(NULL, ":", &saveptr)) {
+		num_ignored++;
+	}
+	strcpy(ignored, ignored_env);
+	ignored_arr = calloc(num_ignored, sizeof(char*));
+	if (!ignored_arr) {
+		ret = ENOMEM;
+		goto done;
+	}
+	num_ignored = 0;
+	for (str = strtok_r(ignored, ":", &saveptr);
+			str; str = strtok_r(NULL, ":", &saveptr)) {
+		ignored_arr[num_ignored] = strdup(str);
+		if (!ignored_arr[num_ignored]) {
+			ret = ENOMEM;
+			goto done;
+		}
+		num_ignored++;
+	}
+	qsort(ignored_arr, num_ignored, sizeof(char*), compare_strings);
+	ret = 0;
+
+done:
+	free(ignored);
+	if (ret) {
+		if (ignored_arr) {
+			char **i;
+			for (i = ignored_arr; *i; i++) {
+				free(*i);
+			}
+			free(ignored_arr);
+		}
+		return ret;
+	}
+	*out = ignored_arr;
+	*out_len = num_ignored;
+	return 0;
+}
+
 /**
  * Initialize the locksmith library.
  */
@@ -160,6 +234,13 @@ static void lksmith_init(void)
 		/* can't use lksmith_error before handler */
 		fprintf(stderr, "lksmith_init: lksmith_handler_init failed.  "
 			"Can't find the real pthreads functions.\n");
+		abort();
+	}
+	ret = lksmith_init_ignored_frames(&g_ignored_frames,
+			&g_num_ignored_frames);
+	if (ret) {
+		lksmith_error(ret, "lksmith_init: lksmith_init_ignored_frames "
+			"failed: error %d: %s\n", ret, terror(ret));
 		abort();
 	}
 	ret = pthread_key_create(&g_tls_key, lksmith_tls_destroy);
@@ -1147,4 +1228,18 @@ const char* lksmith_get_thread_name(void)
 		return NULL;
 	}
 	return tls->name;
+}
+
+int lksmith_get_ignored_frames(char *** ignored, int *num_ignored)
+{
+	struct lksmith_tls *tls = get_or_create_tls();
+
+	if (!tls) {
+		lksmith_error(ENOMEM, "lksmith_get_ignored_frames(): failed "
+			"to allocate thread-local storage.\n");
+		return ENOMEM;
+	}
+	*ignored = g_ignored_frames;
+	*num_ignored = g_num_ignored_frames;
+	return 0;
 }

@@ -144,11 +144,17 @@ void lksmith_error(int err, const char *fmt, ...)
 {
 	va_list ap;
 
+	va_start(ap, fmt);
+	lksmith_errora(err, fmt, ap);
+	va_end(ap);
+}
+
+void lksmith_errora(int err, const char *fmt, va_list ap)
+{
 	r_pthread_mutex_lock(&g_error_lock);
 	if (g_log_type == LKSMITH_LOG_UNINIT) {
 		lksmith_log_init();
 	}
-	va_start(ap, fmt);
 	if (g_log_type == LKSMITH_LOG_SYSLOG) {
 		vsyslog(LOG_USER | LOG_INFO, fmt, ap);
 	} else if (g_log_type == LKSMITH_LOG_FILE) {
@@ -158,7 +164,6 @@ void lksmith_error(int err, const char *fmt, ...)
 		vsnprintf(buf, sizeof(buf), fmt, ap);
 		g_error_cb(err, buf);
 	}
-	va_end(ap);
 	r_pthread_mutex_unlock(&g_error_lock);
 }
 

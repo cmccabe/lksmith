@@ -27,60 +27,36 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef LKSMITH_ERROR_H
-#define LKSMITH_ERROR_H
+#include "lksmith.h"
+#include "test.h"
 
 #include <errno.h>
-#include <stdarg.h>
+#include <pthread.h>
+#include <semaphore.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/time.h>
 
-/**
- * The type signature for a Locksmith error reporting callback.
- *
- * For obvious reasons, functions used as error reporting callbacks should not
- * take Locksmith-managed mutexes.
- *
- * @param code		The numeric Locksmith error code (see LKSMITH_ERROR_).
- * @param msg		The human-readable error string.
- */
-typedef void (*lksmith_error_cb_t)(int code, const char * __restrict msg);
+static pthread_mutex_t lock1 = PTHREAD_MUTEX_INITIALIZER;
 
-/**
- * Log a Locksmith error message.
- *
- * @param err		The error code.
- * @param fmt		printf-style erorr code.
- * @param ...		printf-style arguments.
- */
-void lksmith_error(int err, const char *fmt, ...)
-	__attribute__((format(printf, 2, 3)));
+int lksmith_get_ignored_frames(char *** ignored, int *num_ignored);
 
+int main(void)
+{
+	char **ignored = 0;
+	int num_ignored = 0;
 
-/**
- * Log a Locksmith error message.
- *
- * @param err		The error code.
- * @param fmt		printf-style erorr code.
- * @param ...		printf-style arguments.
- */
-void lksmith_errora(int err, const char *fmt, va_list ap);
+	putenv("LKSMITH_IGNORED_FRAMES=ignore3:ignore2:ignore1");
+	pthread_mutex_lock(&lock1);
+	pthread_mutex_unlock(&lock1);
 
-/**
- * Look up the error message associated with a POSIX error code.
- *
- * This function is thread-safe.
- *
- * @param err		The POSIX error code (should be non-negative)
- *
- * @return		The error message.  This is a statically allocated
- *			string. 
- */
-const char *terror(int err);
+	EXPECT_EQ(0, lksmith_get_ignored_frames(&ignored, &num_ignored));
+	EXPECT_EQ(3, num_ignored);
+	EXPECT_ZERO(strcmp("ignore1", ignored[0]));
+	EXPECT_ZERO(strcmp("ignore2", ignored[1]));
+	EXPECT_ZERO(strcmp("ignore3", ignored[2]));
 
-/*
- * If we don't have ELIBACC, use EIO instead.
- */
-#ifndef ELIBACC
-#define ELIBACC EIO
-#endif
-
-#endif
+	return EXIT_SUCCESS;
+}
