@@ -978,13 +978,73 @@ static int lksmith_search(struct lksmith_lock *lk, const void *start)
 	return 0;
 }
 
+static void lksmith_prelock_process_depends(struct lksmith_tls *tls,
+			struct lksmith_lock *lk, const void *ptr)
+{
+	unsigned int i;
+	const void *held;
+	struct lksmith_lock *ak;
+
+	g_color++;
+	for (i = 0; i < tls->num_held; i++) {
+		held = tls->held[i];
+		ak = lksmith_find(held);
+		if (!ak) {
+			lksmith_error(ENOMEM, "lksmith_prelock(lock=%p, "
+				"thread=%s): thread holds unknown lock %p.\n",
+				ptr, tls->name, held);
+			continue;
+		}
+		if (ak == lk) {
+			if (ak->props.recursive)
+				continue;
+			lksmith_error(EDEADLK, "lksmith_prelock(lock=%p, "
+				"thread=%s): this thread already holds "
+				"this lock, and it is not a recursive lock.\n",
+				ptr, tls->name);
+			continue;
+		}
+		if (lksmith_search(ak, ptr)) {
+			lksmith_error(EDEADLK, "lksmith_prelock(lock=%p, "
+				"thread=%s): lock inversion!  This lock "
+				"should have been taken before lock %p, which "
+				"this thread already holds.\n",
+				ptr, tls->name, held);
+			continue;
+		}
+		lk_add_before(lk, ak);
+	}
+}
+
+/**
+ * Returns true if lksmith_prelock should skip dependency processing.
+ *
+ * We search the current backtrace for any element that is in the ignore
+ * list.
+ */
+static int should_skip_dependency_processing(struct lksmith_holder *holder)
+{
+	int idx = 0;
+	char *match;
+
+	while (1) {
+		const char *frame = holder->bt_frames[idx++];
+		if (!frame)
+			break;
+		match = bsearch(frame, g_ignored_frames, g_num_ignored_frames,
+				sizeof(char*), compare_strings);
+		if (match) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
 int lksmith_prelock(const void *ptr, int sleeper)
 {
-	const void *held;
-	struct lksmith_lock *lk, *ak;
+	struct lksmith_lock *lk;
 	struct lksmith_tls *tls;
 	int ret;
-	unsigned int i;
 	struct lksmith_holder *holder = NULL;
 
 	tls = get_or_create_tls();
@@ -1019,37 +1079,11 @@ int lksmith_prelock(const void *ptr, int sleeper)
 			goto done_unlock;
 		}
 	}
-	g_color++;
-	for (i = 0; i < tls->num_held; i++) {
-		held = tls->held[i];
-		ak = lksmith_find(held);
-		if (!ak) {
-			lksmith_error(ENOMEM, "lksmith_prelock(lock=%p, "
-				"thread=%s): thread holds unknown lock %p.\n",
-				ptr, tls->name, held);
-			continue;
-		}
-		if (ak == lk) {
-			if (ak->props.recursive)
-				continue;
-			lksmith_error(EDEADLK, "lksmith_prelock(lock=%p, "
-				"thread=%s): this thread already holds "
-				"this lock, and it is not a recursive lock.\n",
-				ptr, tls->name);
-			continue;
-		}
-		ret = lksmith_search(ak, ptr);
-		if (ret) {
-			lksmith_error(EDEADLK, "lksmith_prelock(lock=%p, "
-				"thread=%s): lock inversion!  This lock "
-				"should have been taken before lock %p, which "
-				"this thread already holds.\n",
-				ptr, tls->name, held);
-			continue;
-		}
-		lk_add_before(lk, ak);
+	if (!should_skip_dependency_processing(holder)) {
+		lksmith_prelock_process_depends(tls, lk, ptr);
 	}
 	lk_holder_add(lk, holder);
+
 	holder = NULL;
 	ret = 0;
 done_unlock:
