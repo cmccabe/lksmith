@@ -28,6 +28,8 @@ set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_GNU_SOURCE")
 # invoked, but they had been unloaded.
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -z nodelete")
 
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake_modules")
+
 set(CMAKE_C_FLAGS_RELEASE "-O3 -Wuninitialized")
 set(CMAKE_C_FLAGS_DEBUG "-g -O0 -fstack-protector -rdynamic")
 set(CMAKE_CURRENT_BINARY_DIR, builds)
@@ -38,15 +40,16 @@ SET(CMAKE_INSTALL_PREFIX /usr/local)
 # scenarios.  This should always work on Linux.
 INCLUDE(CheckCSourceCompiles)
 CHECK_C_SOURCE_COMPILES("int main(void) { static __thread int i = 0; return 0; }" HAVE_IMPROVED_TLS)
-CHECK_C_SOURCE_COMPILES("#include <execinfo.h>
-int main(void) { return backtrace(0, 0); }" HAVE_BACKTRACE_FUNCTION)
 
 CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/config.h.cmake ${CMAKE_BINARY_DIR}/config.h)
+
+find_package(Libunwind REQUIRED)
 
 # Set up include paths
 include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_BINARY_DIR}
+    ${LIBUNWIND_INCLUDE_DIR}
 )
 
 macro(add_utest utest)
@@ -72,6 +75,7 @@ INSTALL(TARGETS lksmith LIBRARY DESTINATION lib)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     target_link_libraries(lksmith dl)
 endif()
+target_link_libraries(lksmith ${LIBUNWIND_LIBRARIES})
 
 add_executable(thread_unit test.c thread_unit.c test.c mem.c)
 target_link_libraries(thread_unit lksmith)

@@ -31,6 +31,5 @@
 #define LKSMITH_CONFIG_H
 
 #cmakedefine HAVE_IMPROVED_TLS
-#cmakedefine HAVE_BACKTRACE_FUNCTION
 
 #endif

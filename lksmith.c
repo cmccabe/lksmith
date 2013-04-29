@@ -35,9 +35,10 @@
 #include "tree.h"
 #include "util.h"
 
-#include <execinfo.h>
 #include <errno.h>
+#include <execinfo.h>
 #include <inttypes.h>
+#include <libunwind.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -49,7 +50,6 @@
  *  Locksmith private data structures
  *****************************************************************/
 #define MAX_NLOCK 0x1fffffffffffffffULL
-#define LKSMITH_BACKTRACE_MAX 256
 
 struct lksmith_lock_props {
 	/** The number of times this mutex has been locked. */
@@ -67,7 +67,7 @@ struct lksmith_holder {
 	/** Name of the thread holding the lock */
 	char name[LKSMITH_THREAD_NAME_MAX];
 	/** Stack frames */
-	void** frames;
+	char** bt_frames;
 	/** Next in singly-linked list */
 	struct lksmith_holder *next;
 };
@@ -98,8 +98,6 @@ struct lksmith_tls {
 	uint64_t num_spins : 63;
 	/** 1 if we should intercept pthreads calls; 0 otherwise */
 	uint64_t intercept : 1;
-	/** Scratch area used for taking backtraces. */
-	void *scratch[LKSMITH_BACKTRACE_MAX];
 };
 
 /******************************************************************
@@ -377,47 +375,145 @@ static void holder_dump(const struct lksmith_holder *holder,
 		char *buf, size_t *off, size_t buf_len)
 {
 	const char *prefix = "";
-	void **v;
+	char **v;
 
 	fwdprintf(buf, off, buf_len, "{name=%s, "
-		"frames=[", holder->name);
-	for (v = holder->frames; *v; v++) {
-		fwdprintf(buf, off, buf_len, "%s%p",
+		"bt_frames=[", holder->name);
+	for (v = holder->bt_frames; *v; v++) {
+		fwdprintf(buf, off, buf_len, "%s%s",
 			  prefix, *v);
 		prefix = ", ";
 	}
 	fwdprintf(buf, off, buf_len, "]}");
 }
 
-#ifdef HAVE_BACKTRACE_FUNCTION
-static int platform_create_backtrace(void **scratch, int scratch_len,
-				void ***out)
-{
-	void **frames;
-	int len;
+#define STACK_BUF_SZ 512
 
-	len = backtrace(scratch, scratch_len);
-	frames = malloc(sizeof(void*) * (len + 1));
-	if (!frames)
+static int do_get_proc_fname(unw_cursor_t *cursor, char **out_fname,
+		char **heap_buf, size_t *heap_buf_len)
+{
+	int ret;
+	unw_word_t  offset;
+	char *next_heap_buf = NULL, *stack_buf = NULL, *fname;
+	size_t len = *heap_buf_len;
+
+	while (1) {
+		if (!len) {
+			stack_buf = alloca(STACK_BUF_SZ);
+			ret = unw_get_proc_name(cursor, stack_buf,
+				STACK_BUF_SZ, &offset);
+		} else {
+			ret = unw_get_proc_name(cursor, *heap_buf,
+				len, &offset);
+		}
+		if (ret == 0) {
+			break;
+		} else if (ret != -UNW_ENOMEM) {
+			lksmith_error(ENOMEM, "create_backtrace "
+				"failed: unw_get_proc_name failed "
+				"with error %d\n", ret);
+			return EIO;
+		}
+		len = len ? (len * 2) : (STACK_BUF_SZ * 2);
+		next_heap_buf = realloc(*heap_buf, len);
+		if (!next_heap_buf) {
+			lksmith_error(ENOMEM, "create_backtrace "
+				"failed: failed to allocate buffer of "
+					"size %zd to hold proc name\n", len);
+			return ENOMEM;
+		}
+		*heap_buf = next_heap_buf;
+		*heap_buf_len = len;
+	}
+	fname = strdup(len ? *heap_buf : stack_buf);
+	if (!fname) {
+		lksmith_error(ENOMEM, "create_backtrace failed: failed "
+			"to allocate buffer to hold proc name\n");
 		return ENOMEM;
-	memcpy(frames, scratch, len * sizeof(void*));
-	frames[len] = NULL;
-	*out = frames;
+	}
+	*out_fname = fname;
 	return 0;
 }
-#else
-static int platform_create_backtrace(void **scratch __attribute__((unused)),
-	int scratch_len __attribute__((unused)), void ***out)
-{
-	void **frames;
 
-	frames = calloc(1, sizeof(void*));
-	if (!frames)
-		return ENOMEM;
-	*out = frames;
+static void bt_frames_free(char **backtrace)
+{
+	char **b;
+
+	if (!backtrace)
+		return;
+	for (b = backtrace; *b; b++) {
+		free(*b);
+	}
+	free(backtrace);
+}
+
+static int bt_frames_create(char ***out)
+{
+	int ret;
+	unw_cursor_t cursor;
+	unw_context_t context;
+	char *heap_buf = NULL;
+	size_t heap_buf_len = 0;
+	char **backtrace = NULL, **backtrace_new;
+	size_t backtrace_len = 0, cap = 0;
+
+	if (unw_getcontext(&context)) {
+		lksmith_error(ENOMEM, "create_backtrace failed: "
+			"unw_getcontext failed.\n");
+		return EIO;
+	}
+	ret = unw_init_local(&cursor, &context);
+	if (ret) {
+		lksmith_error(ENOMEM, "create_backtrace failed: "
+			"unw_init_local failed with error %d\n", ret);
+		return EIO;
+	}
+	while (unw_step(&cursor) > 0) {
+		if (++backtrace_len > cap) {
+			size_t new_cap = cap ? cap * 2 : 32;
+			backtrace_new = realloc(backtrace, 
+						sizeof(char*) * new_cap);
+			if (!backtrace_new) {
+				lksmith_error(ENOMEM, "create_backtrace "
+					"failed: failed to allocate char* "
+					"array of length %zd\n", new_cap);
+				ret = EIO;
+				goto done;
+			}
+			backtrace = backtrace_new;
+			cap = new_cap;
+		}
+		ret = do_get_proc_fname(&cursor, &backtrace[backtrace_len - 1],
+					&heap_buf, &heap_buf_len);
+		if (ret != 0) {
+			lksmith_error(ENOMEM, "create_backtrace failed: "
+				"do_get_proc_fname failed with error %d\n",
+				ret);
+			ret = EIO;
+			goto done;
+		}
+	}
+	backtrace_new = realloc(backtrace, sizeof(char*) *
+				(backtrace_len + 1));
+	if (!backtrace_new) {
+		lksmith_error(ENOMEM, "create_backtrace failed: failed to "
+			"allocate char* array of length %zd\n",
+			backtrace_len + 1);
+		ret = ENOMEM;
+		goto done;
+	}
+	backtrace = backtrace_new;
+	backtrace[backtrace_len] = NULL;
+	ret = 0;
+done:
+	free(heap_buf);
+	if (ret) {
+		bt_frames_free(backtrace);
+		return ret;
+	}
+	*out = backtrace;
 	return 0;
 }
-#endif
 
 /**
  * Create a lock holder.
@@ -437,8 +533,7 @@ static struct lksmith_holder* holder_create(struct lksmith_tls *tls)
 	snprintf(holder->name, sizeof(holder->name), "%s", tls->name); 
 	intercept = tls->intercept;
 	tls->intercept = 0;
-	ret = platform_create_backtrace(tls->scratch, LKSMITH_BACKTRACE_MAX,
-			&holder->frames);
+	ret = bt_frames_create(&holder->bt_frames);
 	tls->intercept = intercept;
 	if (ret) {
 		free(holder);
@@ -454,7 +549,7 @@ static struct lksmith_holder* holder_create(struct lksmith_tls *tls)
  */
 static void holder_free(struct lksmith_holder *holder)
 {
-	free(holder->frames);
+	bt_frames_free(holder->bt_frames);
 	free(holder);
 }
 
