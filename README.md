@@ -76,6 +76,9 @@ TODO
 * Add a way to suppress deadlock warnings through the use of compile-time annotations.
 * Add the ability to name mutexes and threads through the use of compile-time annotations.
 * Better support for debugging cross-process mutexes and spin-locks (perhaps by putting Locksmith globals into a shared memory segment?)  This is tricky because cross-process locks won't have the same memory address in different processes.
+* check for uninitialized condition variables. 
+* add "assert that I have this locked" API
+* statistics on lock usage and contention
 
 Contact information
 -------------------------------------------------------------
