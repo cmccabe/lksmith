@@ -19,7 +19,7 @@ SET(CPACK_GENERATOR "TGZ")
 INCLUDE(CPack)
 
 set(CMAKE_BUILD_TYPE, Release) # can also be Debug
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -fno-strict-aliasing")
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -fno-strict-aliasing -rdynamic")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_REENTRANT -D_FILE_OFFSET_BITS=64")
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_GNU_SOURCE")
 # We use pthread_key_create with a non-NULL destructor parameter, so we
@@ -31,7 +31,7 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -z nodelete")
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake_modules")
 
 set(CMAKE_C_FLAGS_RELEASE "-O3 -Wuninitialized")
-set(CMAKE_C_FLAGS_DEBUG "-g -O0 -fstack-protector -rdynamic")
+set(CMAKE_C_FLAGS_DEBUG "-g -O0 -fstack-protector")
 set(CMAKE_CURRENT_BINARY_DIR, builds)
 SET(CMAKE_INSTALL_PREFIX /usr/local)
 
@@ -41,9 +41,15 @@ SET(CMAKE_INSTALL_PREFIX /usr/local)
 INCLUDE(CheckCSourceCompiles)
 CHECK_C_SOURCE_COMPILES("int main(void) { static __thread int i = 0; return 0; }" HAVE_IMPROVED_TLS)
 
-CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/config.h.cmake ${CMAKE_BINARY_DIR}/config.h)
+SET(USE_LIBUNWIND false)
+if(USE_LIBUNWIND)
+    find_package(Libunwind REQUIRED)
+endif(USE_LIBUNWIND)
 
-find_package(Libunwind REQUIRED)
+CHECK_C_SOURCE_COMPILES("#include <execinfo.h>
+int main(void) { return backtrace(0, 0); }" HAVE_LIBC_BACKTRACE)
+
+CONFIGURE_FILE(${CMAKE_SOURCE_DIR}/config.h.cmake ${CMAKE_BINARY_DIR}/config.h)
 
 # Set up include paths
 include_directories(
@@ -57,13 +63,21 @@ macro(add_utest utest)
 endmacro(add_utest)
 
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    set(PLATFORM_FILE linux_platform.c)
+    set(PLATFORM_FILES linux_platform.c)
 else()
-    set(PLATFORM_FILE posix_platform.c)
+    set(PLATFORM_FILES posix_platform.c)
+endif()
+
+if (USE_LIBUNWIND)
+    set(PLATFORM_FILES ${PLATFORM_FILES} libunwind_backtrace.c)
+elseif (HAVE_LIBC_BACKTRACE)
+    set(PLATFORM_FILES ${PLATFORM_FILES} libc_backtrace.c)
+else()
+    LOG(FATAL_ERROR "can't find any backtrace scheme to use.  Perhaps install libunwind.")
 endif()
 
 add_library(lksmith SHARED
-    ${PLATFORM_FILE}
+    ${PLATFORM_FILES}
     error.c
     lksmith.c
     handler.c
@@ -75,7 +89,9 @@ INSTALL(TARGETS lksmith LIBRARY DESTINATION lib)
 if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
     target_link_libraries(lksmith dl)
 endif()
-target_link_libraries(lksmith ${LIBUNWIND_LIBRARIES})
+if(USE_LIBUNWIND)
+    target_link_libraries(lksmith ${LIBUNWIND_LIBRARIES})
+endif(USE_LIBUNWIND)
 
 add_executable(thread_unit test.c thread_unit.c test.c mem.c)
 target_link_libraries(thread_unit lksmith)
