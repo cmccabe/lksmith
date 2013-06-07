@@ -42,22 +42,22 @@
 static pthread_mutex_t lock1 = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t lock2 = PTHREAD_MUTEX_INITIALIZER;
 
-int lksmith_get_ignored_frames(char *** ignored, int *num_ignored);
+int lksmith_get_ignored_frame_patterns(char *** ignored, int *num_ignored);
 
-static int check_ignored_frames(void)
+static int check_ignored_frame_patterns(void)
 {
 	char **ignored = 0;
 	int num_ignored = 0;
 
-	EXPECT_EQ(0, lksmith_get_ignored_frames(&ignored, &num_ignored));
+	EXPECT_EQ(0, lksmith_get_ignored_frame_patterns(&ignored, &num_ignored));
 	EXPECT_EQ(3, num_ignored);
-	EXPECT_ZERO(strcmp("ignore1", ignored[0]));
-	EXPECT_ZERO(strcmp("ignore2", ignored[1]));
-	EXPECT_ZERO(strcmp("ignore3", ignored[2]));
+	EXPECT_ZERO(strcmp("*ignore1*", ignored[0]));
+	EXPECT_ZERO(strcmp("*ignore2*", ignored[1]));
+	EXPECT_ZERO(strcmp("*ignore3*", ignored[2]));
 	return 0;
 }
 
-static void ignore1(void)
+void ignore1(void)
 {
 	pthread_mutex_lock(&lock2);
 	pthread_mutex_lock(&lock1);
@@ -65,7 +65,7 @@ static void ignore1(void)
 	pthread_mutex_unlock(&lock2);
 }
 
-static int verify_ignored_frames_work(void)
+static int verify_ignored_frame_patterns_work(void)
 {
 	clear_recorded_errors();
 	pthread_mutex_lock(&lock1);
@@ -79,11 +79,11 @@ static int verify_ignored_frames_work(void)
 
 int main(void)
 {
-	putenv("LKSMITH_IGNORED_FRAMES=ignore3:ignore2:ignore1");
+	putenv("LKSMITH_IGNORED_FRAME_PATTERNS=*ignore3*:*ignore2*:*ignore1*");
 
 	set_error_cb(record_error);
-	EXPECT_ZERO(check_ignored_frames());
-	EXPECT_ZERO(verify_ignored_frames_work());
+	EXPECT_ZERO(check_ignored_frame_patterns());
+	EXPECT_ZERO(verify_ignored_frame_patterns_work());
 
 	return EXIT_SUCCESS;
 }

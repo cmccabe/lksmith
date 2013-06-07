@@ -61,32 +61,25 @@ int bt_frames_create(void ***scratch, int *scratch_len, char ***out)
 {
 	int num_symbols;
 	void **next;
-	char **symbols, **nt_symbols;
+	char **symbols;
 
-	while ((num_symbols = try_backtrace(*scratch, *scratch_len)) < 0) {
+	while (((num_symbols = try_backtrace(*scratch, *scratch_len))) < 0) {
 		int next_size = (*scratch_len == 0) ?
 			INITIAL_SCRATCH_SIZE : (*scratch_len * 2);
 		if (next_size > MAX_SCRATCH_SIZE) {
-			return ENOMEM;
+			return -ENOMEM;
 		}
 		next = realloc(*scratch, next_size * sizeof(void*));
 		if (!next) {
-			return ENOMEM;
+			return -ENOMEM;
 		}
 		*scratch = next;
 		*scratch_len = next_size;
 	}
 	symbols = backtrace_symbols(*scratch, num_symbols);
 	if (!symbols) {
-		return ENOMEM;
+		return -ENOMEM;
 	}
-	/* NULL-terminate */
-	nt_symbols = realloc(symbols, (num_symbols + 1) * sizeof(void*));
-	if (!nt_symbols) {
-		free(nt_symbols);
-		return ENOMEM;
-	}
-	nt_symbols[num_symbols] = NULL;
-	*out = nt_symbols;
-	return 0;
+	*out = symbols;
+	return num_symbols;
 }

@@ -109,13 +109,13 @@ int bt_frames_create(void ***scratch __attribute__((__unused__)),
 	if (unw_getcontext(&context)) {
 		lksmith_error(ENOMEM, "bt_frames_create failed: "
 			"unw_getcontext failed.\n");
-		return EIO;
+		return -EIO;
 	}
 	ret = unw_init_local(&cursor, &context);
 	if (ret) {
 		lksmith_error(ENOMEM, "bt_frames_create failed: "
 			"unw_init_local failed with error %d\n", ret);
-		return EIO;
+		return -EIO;
 	}
 	while (unw_step(&cursor) > 0) {
 		if (++backtrace_len > cap) {
@@ -126,7 +126,7 @@ int bt_frames_create(void ***scratch __attribute__((__unused__)),
 				lksmith_error(ENOMEM, "bt_frames_create "
 					"failed: failed to allocate char* "
 					"array of length %zd\n", new_cap);
-				ret = EIO;
+				ret = -EIO;
 				goto done;
 			}
 			backtrace = backtrace_new;
@@ -138,28 +138,18 @@ int bt_frames_create(void ***scratch __attribute__((__unused__)),
 			lksmith_error(ENOMEM, "bt_frames_create failed: "
 				"do_get_proc_fname failed with error %d\n",
 				ret);
-			ret = EIO;
+			ret = -EIO;
 			goto done;
 		}
 	}
-	backtrace_new = realloc(backtrace, sizeof(char*) *
-				(backtrace_len + 1));
-	if (!backtrace_new) {
-		lksmith_error(ENOMEM, "bt_frames_create failed: failed to "
-			"allocate char* array of length %zd\n",
-			backtrace_len + 1);
-		ret = ENOMEM;
-		goto done;
-	}
-	backtrace = backtrace_new;
 	backtrace[backtrace_len] = NULL;
-	ret = 0;
+	ret = backtrace_len;
 done:
 	free(heap_buf);
-	if (ret) {
+	if (ret < 0) {
 		bt_frames_free(backtrace);
 		return ret;
 	}
 	*out = backtrace;
-	return 0;
+	return ret;
 }

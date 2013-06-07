@@ -38,6 +38,7 @@
 
 #include <errno.h>
 #include <execinfo.h>
+#include <fnmatch.h>
 #include <inttypes.h>
 #include <pthread.h>
 #include <stdarg.h>
@@ -68,6 +69,8 @@ struct lksmith_holder {
 	char name[LKSMITH_THREAD_NAME_MAX];
 	/** Stack frames */
 	char** bt_frames;
+	/** Number of stack frames */
+	int bt_len;
 	/** Next in singly-linked list */
 	struct lksmith_holder *next;
 };
@@ -161,6 +164,16 @@ static char **g_ignored_frames;
  */
 static int g_num_ignored_frames;
 
+/**
+ * A list of frame patterns to ignore.
+ */
+static char **g_ignored_frame_patterns;
+
+/**
+ * The number of ignored frame patterns.
+ */
+static int g_num_ignored_frame_patterns;
+
 /******************************************************************
  *  Initialization
  *****************************************************************/
@@ -171,14 +184,14 @@ static int compare_strings(const void *a, const void *b)
 	return strcmp(sa, sb);
 }
 
-static int lksmith_init_ignored_frames(char ***out, int *out_len)
+static int lksmith_init_ignored(const char *env, char ***out, int *out_len)
 {
 	int ret, num_ignored = 0;
 	const char *ignored_env;
 	char *ignored = NULL, **ignored_arr = 0, *saveptr = NULL;
 	const char *str;
 
-	ignored_env = getenv("LKSMITH_IGNORED_FRAMES");
+	ignored_env = getenv(env);
 	if (!ignored_env) {
 		ret = 0;
 		goto done;
@@ -242,11 +255,19 @@ static void lksmith_init(void)
 			"Can't find the real pthreads functions.\n");
 		abort();
 	}
-	ret = lksmith_init_ignored_frames(&g_ignored_frames,
-			&g_num_ignored_frames);
+	ret = lksmith_init_ignored("LKSMITH_IGNORED_FRAMES",
+			&g_ignored_frames, &g_num_ignored_frames);
 	if (ret) {
-		lksmith_error(ret, "lksmith_init: lksmith_init_ignored_frames "
-			"failed: error %d: %s\n", ret, terror(ret));
+		lksmith_error(ret, "lksmith_init: lksmith_init_ignored_frames("
+			"frames) failed: error %d: %s\n", ret, terror(ret));
+		abort();
+	}
+	ret = lksmith_init_ignored("LKSMITH_IGNORED_FRAME_PATTERNS",
+			&g_ignored_frame_patterns,
+			&g_num_ignored_frame_patterns);
+	if (ret) {
+		lksmith_error(ret, "lksmith_init: lksmith_init_ignored_frames("
+			"patterns) failed: error %d: %s\n", ret, terror(ret));
 		abort();
 	}
 	ret = pthread_key_create(&g_tls_key, lksmith_tls_destroy);
@@ -462,13 +483,13 @@ static void holder_dump(const struct lksmith_holder *holder,
 		char *buf, size_t *off, size_t buf_len)
 {
 	const char *prefix = "";
-	char **v;
+	int i;
 
 	fwdprintf(buf, off, buf_len, "{name=%s, "
 		"bt_frames=[", holder->name);
-	for (v = holder->bt_frames; *v; v++) {
-		fwdprintf(buf, off, buf_len, "%s%s",
-			  prefix, *v);
+	for (i = 0; i < holder->bt_len; i++) {
+		fwdprintf(buf, off, buf_len, "%s%s", prefix,
+			  holder->bt_frames[i]);
 		prefix = ", ";
 	}
 	fwdprintf(buf, off, buf_len, "]}");
@@ -495,10 +516,11 @@ static struct lksmith_holder* holder_create(struct lksmith_tls *tls)
 	ret = bt_frames_create(&tls->backtrace_scratch,
 		&tls->backtrace_scratch_len, &holder->bt_frames);
 	tls->intercept = intercept;
-	if (ret) {
+	if (ret < 0) {
 		free(holder);
 		return NULL;
 	}
+	holder->bt_len = ret;
 	return holder;
 }
 
@@ -903,17 +925,22 @@ static void lksmith_prelock_process_depends(struct lksmith_tls *tls,
  */
 static int should_skip_dependency_processing(struct lksmith_holder *holder)
 {
-	int idx = 0;
+	int bt_idx, ip_idx;
 	char *match;
 
-	while (1) {
-		const char *frame = holder->bt_frames[idx++];
-		if (!frame)
-			break;
+	for (bt_idx = 0; bt_idx < holder->bt_len; bt_idx++) {
+		const char *frame = holder->bt_frames[bt_idx];
 		match = bsearch(&frame, g_ignored_frames, g_num_ignored_frames,
 				sizeof(char*), compare_strings);
 		if (match) {
 			return 1;
+		}
+		for (ip_idx = 0; ip_idx < g_num_ignored_frame_patterns;
+			     ip_idx++) {
+			if (!fnmatch(g_ignored_frame_patterns[ip_idx],
+				     frame, 0)) {
+				return 1;
+			}
 		}
 	}
 	return 0;
@@ -1154,5 +1181,19 @@ int lksmith_get_ignored_frames(char *** ignored, int *num_ignored)
 	}
 	*ignored = g_ignored_frames;
 	*num_ignored = g_num_ignored_frames;
+	return 0;
+}
+
+int lksmith_get_ignored_frame_patterns(char *** ignored, int *num_ignored)
+{
+	struct lksmith_tls *tls = get_or_create_tls();
+
+	if (!tls) {
+		lksmith_error(ENOMEM, "lksmith_get_ignored_frame_patterns(): "
+			"failed to allocate thread-local storage.\n");
+		return ENOMEM;
+	}
+	*ignored = g_ignored_frame_patterns;
+	*num_ignored = g_num_ignored_frame_patterns;
 	return 0;
 }

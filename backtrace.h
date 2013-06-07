@@ -37,7 +37,8 @@
  * @param scratch_len     (inout) Thread-local scratch area length.
  * @param out             (out) The backtrace frames.
  *
- * @return                0 on success; error code otherwise
+ * @return                the number of frames on success; a negative error
+ *                        code otherwise
  */
 int bt_frames_create(void ***scratch, int *scratch_len, char ***out);
 
