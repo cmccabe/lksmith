@@ -200,7 +200,12 @@ int pthread_mutex_destroy(pthread_mutex_t *mutex)
 		 */
 		return ret;
 	}
-	return r_pthread_mutex_destroy(mutex);
+	ret = r_pthread_mutex_destroy(mutex);
+	if (ret) {
+		lksmith_error(ret, "pthread_mutex_destroy(mutex=%p): "
+			"failed with error %s (%d)", mutex, terror(ret), ret);
+	}
+	return ret;
 }
 
 int pthread_mutex_trylock(pthread_mutex_t *mutex)
@@ -338,6 +343,16 @@ int pthread_cond_wait(pthread_cond_t *__restrict cond,
 	return r_pthread_cond_wait(cond, mutex);
 }
 
+int pthread_cond_destroy(pthread_cond_t *cond)
+{
+	int ret = r_pthread_cond_destroy(cond);
+	if (ret) {
+		lksmith_error(ret, "pthread_cond_destroy(cond=%p): "
+			"failed with error %s (%d)", cond, terror(ret), ret);
+	}
+	return ret;
+}
+
 // TODO: support barriers
 
 #define LOAD_FUNC(fn) do { \
@@ -362,6 +377,7 @@ int lksmith_handler_init(void)
 	LOAD_FUNC(pthread_spin_unlock);
 	LOAD_FUNC(pthread_cond_wait);
 	LOAD_FUNC(pthread_cond_timedwait);
+	LOAD_FUNC(pthread_cond_destroy);
 
 	return 0;
 }

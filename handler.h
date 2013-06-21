@@ -72,6 +72,8 @@ EXTERN int (*r_pthread_cond_timedwait)(pthread_cond_t *__restrict cond,
 	pthread_mutex_t *__restrict mutex,
 	const struct timespec *__restrict abstime);
 
+EXTERN int (*r_pthread_cond_destroy)(pthread_cond_t *cond);
+
 /******************************************************************
  * Functions
  *****************************************************************/
