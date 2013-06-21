@@ -175,8 +175,14 @@ int pthread_mutex_init(pthread_mutex_t *mutex,
 	 */
 	ret = pthread_mutex_real_init(mutex, (pthread_mutexattr_t*)attr,
 					&recursive);
-	if (ret)
+	if (ret) {
+		/* It's nice to log a message when mutex initialization fails.
+		 * It's a very rare scenario and something that a program can
+		 * easily fail to check. */
+		lksmith_error(ret, "pthread_mutex_init(mutex=%p): "
+			"failed with error %s (%d)", mutex, terror(ret), ret);
 		return ret;
+	}
 	ret = lksmith_optional_init((const void*)mutex, recursive, 1);
 	if (ret) {
 		pthread_mutex_destroy(mutex);
@@ -261,6 +267,8 @@ int pthread_spin_init(pthread_spinlock_t *lock, int pshared)
 		return ret;
 	ret = r_pthread_spin_init(lock, pshared);
 	if (ret) {
+		lksmith_error(ret, "pthread_spin_init(mutex=%p): "
+			"failed with error %s (%d)", lock, terror(ret), ret);
 		lksmith_destroy((const void*)lock);
 		return ret;
 	}
@@ -307,6 +315,17 @@ int pthread_spin_unlock(pthread_spinlock_t *lock)
 		return ret;
 	lksmith_postunlock((const void*)lock);
 	return 0;
+}
+
+int pthread_cond_init(pthread_cond_t *__restrict cond,
+		const pthread_condattr_t *__restrict attr)
+{
+	int ret = r_pthread_cond_init(cond, attr);
+	if (ret) {
+		lksmith_error(ret, "pthread_cond_init(mutex=%p): "
+			"failed with error %s (%d)", cond, terror(ret), ret);
+	}
+	return ret;
 }
 
 int pthread_cond_timedwait(pthread_cond_t *__restrict cond,
@@ -375,6 +394,7 @@ int lksmith_handler_init(void)
 	LOAD_FUNC(pthread_spin_lock);
 	LOAD_FUNC(pthread_spin_trylock);
 	LOAD_FUNC(pthread_spin_unlock);
+	LOAD_FUNC(pthread_cond_init);
 	LOAD_FUNC(pthread_cond_wait);
 	LOAD_FUNC(pthread_cond_timedwait);
 	LOAD_FUNC(pthread_cond_destroy);

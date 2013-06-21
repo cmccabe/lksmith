@@ -50,7 +50,8 @@ void* get_dlsym_next(const char *fname)
 {
 	void *v;
 
-	if ((!strcmp(fname, "pthread_cond_wait")) ||
+	if ((!strcmp(fname, "pthread_cond_init")) ||
+			(!strcmp(fname, "pthread_cond_wait")) ||
 			(!strcmp(fname, "pthread_cond_timedwait")) ||
 			(!strcmp(fname, "pthread_cond_destroy"))) {
 		v = dlvsym(RTLD_NEXT, fname, "GLIBC_2.3.2");

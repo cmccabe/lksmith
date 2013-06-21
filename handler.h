@@ -65,6 +65,9 @@ EXTERN int (*r_pthread_spin_trylock)(pthread_spinlock_t *lock);
 
 EXTERN int (*r_pthread_spin_unlock)(pthread_spinlock_t *lock);
 
+EXTERN int (*r_pthread_cond_init)(pthread_cond_t *__restrict cond,
+		const pthread_condattr_t *__restrict attr);
+
 EXTERN int (*r_pthread_cond_wait)(pthread_cond_t *__restrict cond,
 	pthread_mutex_t *__restrict mutex);
 
