@@ -140,6 +140,31 @@ static void lksmith_log_init(void)
 	}
 }
 
+static void lksmith_errora_unlocked(int err, const char *fmt, va_list ap)
+{
+	if (g_log_type == LKSMITH_LOG_UNINIT) {
+		lksmith_log_init();
+	}
+	if (g_log_type == LKSMITH_LOG_SYSLOG) {
+		vsyslog(LOG_USER | LOG_INFO, fmt, ap);
+	} else if (g_log_type == LKSMITH_LOG_FILE) {
+		vfprintf(g_log_file, fmt, ap);
+	} else if (g_log_type == LKSMITH_LOG_CALLBACK) {
+		char buf[4096];
+		vsnprintf(buf, sizeof(buf), fmt, ap);
+		g_error_cb(err, buf);
+	}
+}
+
+static void lksmith_error_unlocked(int err, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	lksmith_errora_unlocked(err, fmt, ap);
+	va_end(ap);
+}
+
 void lksmith_error(int err, const char *fmt, ...)
 {
 	va_list ap;
@@ -152,17 +177,19 @@ void lksmith_error(int err, const char *fmt, ...)
 void lksmith_errora(int err, const char *fmt, va_list ap)
 {
 	r_pthread_mutex_lock(&g_error_lock);
-	if (g_log_type == LKSMITH_LOG_UNINIT) {
-		lksmith_log_init();
-	}
-	if (g_log_type == LKSMITH_LOG_SYSLOG) {
-		vsyslog(LOG_USER | LOG_INFO, fmt, ap);
-	} else if (g_log_type == LKSMITH_LOG_FILE) {
-		vfprintf(g_log_file, fmt, ap);
-	} else if (g_log_type == LKSMITH_LOG_CALLBACK) {
-		char buf[4096];
-		vsnprintf(buf, sizeof(buf), fmt, ap);
-		g_error_cb(err, buf);
+	lksmith_errora_unlocked(err, fmt, ap);
+	r_pthread_mutex_unlock(&g_error_lock);
+}
+
+void lksmith_errora_with_bt(int err, char **frames, int frames_len,
+			const char *fmt, va_list ap)
+{
+	int i;
+
+	r_pthread_mutex_lock(&g_error_lock);
+	lksmith_errora_unlocked(err, fmt, ap);
+	for (i = 0; i < frames_len; i++) { 
+		lksmith_error_unlocked(0, "%s\n", frames[i]);
 	}
 	r_pthread_mutex_unlock(&g_error_lock);
 }

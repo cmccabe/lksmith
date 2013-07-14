@@ -500,6 +500,45 @@ static int tls_contains_lid(struct lksmith_tls *tls, const void *ptr)
 	return 0;
 }
 
+static void lksmith_error_with_ti(struct lksmith_tls *tls, int err,
+				  const char *fmt, ...)
+	__attribute__((format(printf, 3, 4)));
+
+/**
+ * Locksmith error with thread information (including a backtrace)
+ *
+ * @param tls		Our thread-local storage object
+ * @param err		the locksmith error code
+ * @param fmt		printf-style format string
+ */
+static void lksmith_error_with_ti(struct lksmith_tls *tls, int err,
+				  const char *fmt, ...)
+{
+	va_list ap;
+	int nframes, prev_intercept;
+	char **frames = NULL;
+
+	if (!tls) {
+		tls = get_or_create_tls();
+		if (!tls) {
+			va_start(ap, fmt);
+			lksmith_errora(err, fmt, ap);
+			va_end(ap);
+			return;
+		}
+	}
+	prev_intercept = tls->intercept;
+	tls->intercept = 0;
+	nframes = bt_frames_create(&tls->backtrace_scratch,
+			&tls->backtrace_scratch_len, &frames);
+	tls->intercept = prev_intercept;
+	va_start(ap, fmt);
+	// lksmith_errora_with_bt handles nframes < 0 (the error case)
+	lksmith_errora_with_bt(err, frames, nframes, fmt, ap);
+	va_end(ap);
+	bt_frames_free(frames);
+}
+
 /******************************************************************
  *  Lock holder functions
  *****************************************************************/
@@ -964,25 +1003,25 @@ static void lksmith_prelock_process_depends(struct lksmith_tls *tls,
 		held = tls->held[i];
 		ak = lksmith_find(held);
 		if (!ak) {
-			lksmith_error(ENOMEM, "lksmith_prelock(lock=%p, "
-				"thread=%s): thread holds unknown lock %p.\n",
-				ptr, tls->name, held);
+			lksmith_error_with_ti(tls, ENOMEM, "lksmith_prelock("
+				"lock=%p, thread=%s): thread holds unknown "
+				"lock %p.\n", ptr, tls->name, held);
 			continue;
 		}
 		if (ak == lk) {
 			if (ak->props.recursive)
 				continue;
-			lksmith_error(EDEADLK, "lksmith_prelock(lock=%p, "
-				"thread=%s): this thread already holds "
+			lksmith_error_with_ti(tls, EDEADLK, "lksmith_prelock("
+				"lock=%p, thread=%s): this thread already holds "
 				"this lock, and it is not a recursive lock.\n",
 				ptr, tls->name);
 			continue;
 		}
 		if (lksmith_search(ak, ptr)) {
-			lksmith_error(EDEADLK, "lksmith_prelock(lock=%p, "
-				"thread=%s): lock inversion!  This lock "
-				"should have been taken before lock %p, which "
-				"this thread already holds.\n",
+			lksmith_error_with_ti(tls, EDEADLK, "lksmith_prelock("
+				"lock=%p, thread=%s): lock inversion!  This "
+				"lock should have been taken before lock %p, "
+				"which this thread already holds.\n",
 				ptr, tls->name, held);
 			continue;
 		}
@@ -1113,9 +1152,9 @@ void lksmith_postlock(const void *ptr, int error)
 	if (!lk->props.sleeper) {
 		tls->num_spins++;
 	} else if ((tls->num_spins > 0) && (!lk->props.spin_warn)) {
-		lksmith_error(EWOULDBLOCK, "lksmith_postlock(lock=%p, "
-			"thread=%s): performance problem: you are taking "
-			"a sleeping lock while holding a spin lock.\n",
+		lksmith_error_with_ti(tls, EWOULDBLOCK, "lksmith_postlock("
+			"lock=%p, thread=%s): performance problem: you are "
+			"taking a sleeping lock while holding a spin lock.\n",
 			ptr, tls->name);
 		lk->props.spin_warn = 1;
 	}
@@ -1142,15 +1181,16 @@ int lksmith_preunlock(const void *ptr)
 	r_pthread_mutex_lock(&g_tree_lock);
 	lk = lksmith_find(ptr);
 	if (!lk) {
-		lksmith_error(ENOENT, "lksmith_preunlock(lock=%p, thread=%s): "
-			"attempted to unlock an unknown lock.\n", ptr, tls->name);
+		lksmith_error_with_ti(tls, ENOENT, "lksmith_preunlock(lock=%p, "
+			"thread=%s): attempted to unlock an unknown lock.\n",
+			ptr, tls->name);
 		r_pthread_mutex_unlock(&g_tree_lock);
 		return ENOENT;
 	}
 	sleeper = lk->props.sleeper;
 	r_pthread_mutex_unlock(&g_tree_lock);
 	if (tls_contains_lid(tls, ptr) == 0) {
-		lksmith_error(EPERM, "lksmith_preunlock(lock=%p, "
+		lksmith_error_with_ti(tls, EPERM, "lksmith_preunlock(lock=%p, "
 			"thread=%s): attempted to unlock a lock that this "
 			"thread does not currently hold.\n", ptr, tls->name);
 		return EPERM;
@@ -1185,9 +1225,9 @@ void lksmith_postunlock(const void *ptr)
 	r_pthread_mutex_lock(&g_tree_lock);
 	lk = lksmith_find(ptr);
 	if (!lk) {
-		lksmith_error(EIO, "lksmith_preunlock(lock=%p, thread=%s): "
-			"logic error: attempted to unlock an unknown lock.\n",
-			ptr, tls->name);
+		lksmith_error_with_ti(tls, EIO, "lksmith_preunlock(lock=%p, "
+			"thread=%s): logic error: attempted to unlock an "
+			"unknown lock.\n", ptr, tls->name);
 		r_pthread_mutex_unlock(&g_tree_lock);
 		return;
 	}
@@ -1240,7 +1280,7 @@ int lksmith_cond_prewait(const void *cond, const void *mutex,
 	} else if (cnd->lock != mutex) {
 		r_pthread_mutex_unlock(&g_cond_tree_lock);
 		ret = EINVAL;
-		lksmith_error(ret, "lksmith_cond_prewait(cond=%p,"
+		lksmith_error_with_ti(NULL, ret, "lksmith_cond_prewait(cond=%p,"
 		      "mutex=%p): you are currently waiting (or are about "
 		      "to wait) on this condition variable with a different "
 		      "lock, %p.", cond, mutex, cnd->lock);
@@ -1277,7 +1317,7 @@ int lksmith_cond_predestroy(const void *cond)
 	r_pthread_mutex_unlock(&g_cond_tree_lock);
 	if (refcnt != 0) {
 		ret = EINVAL;
-		lksmith_error(ret, "lksmith_cond_predestroy(cond=%p): "
+		lksmith_error_with_ti(NULL, ret, "lksmith_cond_predestroy(cond=%p): "
 			"you are trying to destroy a condition variable "
 			"that is in use!", cond);
 		return ret;

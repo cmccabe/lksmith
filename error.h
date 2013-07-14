@@ -48,21 +48,33 @@ typedef void (*lksmith_error_cb_t)(int code, const char * __restrict msg);
  * Log a Locksmith error message.
  *
  * @param err		The error code.
- * @param fmt		printf-style erorr code.
+ * @param fmt		printf-style format string.
  * @param ...		printf-style arguments.
  */
 void lksmith_error(int err, const char *fmt, ...)
 	__attribute__((format(printf, 2, 3)));
 
-
 /**
  * Log a Locksmith error message.
  *
  * @param err		The error code.
- * @param fmt		printf-style erorr code.
+ * @param fmt		printf-style format string.
  * @param ...		printf-style arguments.
  */
 void lksmith_errora(int err, const char *fmt, va_list ap);
+
+/**
+ * Log a Locksmith error message together with a backtrace.
+ *
+ * @param err		The error code.
+ * @param frames	string array
+ * @param frames_len	length of string array.  If this is <= 0, the array
+ *			will be ignored.
+ * @param fmt		printf-style format string.
+ * @param ap 		printf-style arguments.
+ */
+void lksmith_errora_with_bt(int err, char **frames, int frames_len,
+			const char *fmt, va_list ap);
 
 /**
  * Look up the error message associated with a POSIX error code.
