@@ -95,6 +95,7 @@ void clear_recorded_errors(void)
 		free(rec);
 		rec = next;
 	}
+	g_recorded_errors = NULL;
 	r_pthread_mutex_unlock(&g_recorded_errors_lock);
 }
 
