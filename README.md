@@ -25,10 +25,10 @@ What kinds of errors does Locksmith catch?
 For example, if one thread locks mutex A and then tries to lock mutex B, and
 another thread locks mutex B and then tries to locks mutex A.
 
-2. Freeing a mutex or spinlock that you currently hold.
-In the pthreads library, freeing a mutex or spinlock that you currently hold
-can cause undefined behavior.  You must release it first. Locksmith issues an
-error message in this case.
+2. Freeing a mutex, spinlock, or condition variable that you currently hold.
+In the pthreads library, freeing a mutex, spinlock, or condition variable that
+you currently hold can cause undefined behavior.  You must release it first.
+Locksmith issues an error message in this case.
 
 3. Unlocking a mutex from a different thread than the one which locked it.
 This is another scenario which triggers undefined behavior in pthreads, but
@@ -36,6 +36,9 @@ which Locksmith turns into a hard error.
 
 4. Calling pthread_cond_wait on something that isn't a mutex locked by the
 current thread.
+
+5. Simultaneously calling pthread_cond_wait on the same condition variable
+using different mutexes.
 
 What choices are available for LKSMITH\_OUTPUT? 
 -------------------------------------------------

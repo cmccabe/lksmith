@@ -332,6 +332,7 @@ int pthread_cond_timedwait(pthread_cond_t *__restrict cond,
 	pthread_mutex_t *__restrict mutex,
 	const struct timespec *__restrict abstime)
 {
+	struct lksmith_cond *cnd = NULL;
 	int ret = lksmith_check_locked((const void*)mutex);
 	if (ret > 0) {
 		return ret;
@@ -343,12 +344,18 @@ int pthread_cond_timedwait(pthread_cond_t *__restrict cond,
 			cond, mutex);
 		return EPERM;
 	}
-	return r_pthread_cond_timedwait(cond, mutex, abstime);
+	ret = lksmith_cond_prewait(cond, mutex, &cnd);
+	if (ret)
+		return ret;
+	ret = r_pthread_cond_timedwait(cond, mutex, abstime);
+	lksmith_cond_postwait(cnd);
+	return ret;
 }
 
 int pthread_cond_wait(pthread_cond_t *__restrict cond,
 	pthread_mutex_t *__restrict mutex)
 {
+	struct lksmith_cond *cnd = NULL;
 	int ret = lksmith_check_locked((const void*)mutex);
 	if (ret > 0) {
 		return ret;
@@ -359,12 +366,20 @@ int pthread_cond_wait(pthread_cond_t *__restrict cond,
 			"error in your program.\n", cond, mutex);
 		return EPERM;
 	}
-	return r_pthread_cond_wait(cond, mutex);
+	ret = lksmith_cond_prewait(cond, mutex, &cnd);
+	if (ret)
+		return ret;
+	ret = r_pthread_cond_wait(cond, mutex);
+	lksmith_cond_postwait(cnd);
+	return ret;
 }
 
 int pthread_cond_destroy(pthread_cond_t *cond)
 {
-	int ret = r_pthread_cond_destroy(cond);
+	int ret = lksmith_cond_predestroy(cond);
+	if (ret)
+		return ret;
+	ret = r_pthread_cond_destroy(cond);
 	if (ret) {
 		lksmith_error(ret, "pthread_cond_destroy(cond=%p): "
 			"failed with error %s (%d)", cond, terror(ret), ret);

@@ -37,6 +37,8 @@
 extern "C" {
 #endif
 
+struct lksmith_cond;
+
 /******************************************************************
  *  Locksmith macros
  *****************************************************************/
@@ -159,6 +161,33 @@ void lksmith_postunlock(const void *ptr);
  * 			a positive error code otherwise.
  */
 int lksmith_check_locked(const void *ptr);
+
+/**
+ * Register a given condition variable as about to wait.
+ *
+ * @param cond		pointer to the condition variable
+ * @param mutex		pointer to the mutex to be used with cond
+ * @param out		(out param) on success, a pointer to be used
+ *			with lksmith_cond_postwait.
+ *
+ * @return		0 on success; error code otherwise.
+ */
+int lksmith_cond_prewait(const void *cond, const void *mutex,
+			struct lksmith_cond **out);
+
+/**
+ * Unregister a given condition variable as about to wait.
+ *
+ * @param cnd		pointer returned from lksmith_cond_prewait
+ */
+void lksmith_cond_postwait(struct lksmith_cond *cnd);
+
+/**
+ * Destroy a given condition variable.
+ *
+ * @param cond		the condition variable
+ */
+int lksmith_cond_predestroy(const void *cond);
 
 /**
  * Set the thread name.

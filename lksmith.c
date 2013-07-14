@@ -6,14 +6,14 @@
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
- * 
+ *
  * Redistributions of source code must retain the above copyright notice, this
  * list of conditions and the following disclaimer.
- * 
+ *
  * Redistributions in binary form must reproduce the above copyright notice,
  * this list of conditions and the following disclaimer in the documentation
  * and/or other materials provided with the distribution.
- * 
+ *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
@@ -90,6 +90,17 @@ struct lksmith_lock {
 	struct lksmith_lock **before;
 };
 
+struct lksmith_cond {
+	RB_ENTRY(lksmith_cond) entry;
+	/** The condition variable pointer */
+	const void *ptr;
+	/** When a pthread_cond_wait is in progress on this condition variable,
+	 * this is the lock that is being used. */
+	const void *lock;
+	/** Number of waiters */
+	uint64_t refcnt;
+};
+
 struct lksmith_tls {
 	/** The name of this thread. */
 	char name[LKSMITH_THREAD_NAME_MAX];
@@ -110,10 +121,14 @@ struct lksmith_tls {
 /******************************************************************
  *  Locksmith prototypes
  *****************************************************************/
-static int lksmith_lock_compare(const struct lksmith_lock *a, 
+static int lksmith_lock_compare(const struct lksmith_lock *a,
 		const struct lksmith_lock *b) __attribute__((const));
 RB_HEAD(lock_tree, lksmith_lock);
 RB_GENERATE(lock_tree, lksmith_lock, entry, lksmith_lock_compare);
+static int lksmith_cond_compare(const struct lksmith_cond *a,
+		const struct lksmith_cond *b) __attribute__((const));
+RB_HEAD(cond_tree, lksmith_cond);
+RB_GENERATE(cond_tree, lksmith_cond, entry, lksmith_cond_compare);
 static void lksmith_tls_destroy(void *v);
 static void lk_dump_to_stderr(struct lksmith_lock *lk) __attribute__((unused));
 static void tree_print(void) __attribute__((unused));
@@ -148,6 +163,16 @@ static pthread_mutex_t g_tree_lock;
  * Tree of mutexes sorted by pointer
  */
 struct lock_tree g_tree;
+
+/**
+ * Mutex which protects g_cond_tree
+ */
+static pthread_mutex_t g_cond_tree_lock;
+
+/**
+ * Tree of condition variables sorted by pointer
+ */
+struct cond_tree g_cond_tree;
 
 /**
  * The latest color that has been used in graph traversal
@@ -282,6 +307,13 @@ static void lksmith_init(void)
 			"g_tree_lock) failed: error %d: %s\n", ret, terror(ret));
 		abort();
 	}
+	ret = r_pthread_mutex_init(&g_cond_tree_lock, NULL);
+	if (ret) {
+		lksmith_error(ret, "lksmith_init: pthread_mutex_init "
+			"g_cond_tree_lock) failed: error %d: %s\n",
+			ret, terror(ret));
+		abort();
+	}
 	lksmith_error(0, "Locksmith has been initialized for process %lld\n",
 		      (long long)getpid());
 	g_initialized = 1;
@@ -390,7 +422,7 @@ static struct lksmith_tls *get_or_create_tls(void)
 int init_tls(void)
 {
 	struct lksmith_tls *tls;
-	
+
 	tls = get_or_create_tls();
 	if (!tls)
 		return -ENOMEM;
@@ -510,7 +542,7 @@ static struct lksmith_holder* holder_create(struct lksmith_tls *tls)
 	holder = calloc(1, sizeof(*holder));
 	if (!holder)
 		return NULL;
-	snprintf(holder->name, sizeof(holder->name), "%s", tls->name); 
+	snprintf(holder->name, sizeof(holder->name), "%s", tls->name);
 	intercept = tls->intercept;
 	tls->intercept = 0;
 	ret = bt_frames_create(&tls->backtrace_scratch,
@@ -704,7 +736,7 @@ static void lk_dump(const struct lksmith_lock *lk,
 
 	fwdprintf(buf, off, buf_len, "lk{ptr=%p, "
 		"nlock=%"PRId64", recursive=%d, sleeper=%d,"
-		"color=%"PRId64", before={", 
+		"color=%"PRId64", before={",
 		(void*)lk->ptr, (uint64_t)lk->props.nlock,
 		lk->props.recursive, lk->props.sleeper,
 		lk->color);
@@ -779,6 +811,47 @@ static struct lksmith_lock *lksmith_find(const void *ptr)
 	memset(&exemplar, 0, sizeof(exemplar));
 	exemplar.ptr = ptr;
 	return RB_FIND(lock_tree, &g_tree, &exemplar);
+}
+
+/******************************************************************
+ *  Cond functions
+ *****************************************************************/
+static int lksmith_cond_compare(const struct lksmith_cond *a,
+		const struct lksmith_cond *b)
+{
+	const void *pa = a->ptr;
+	const void *pb = b->ptr;
+	if (pa < pb)
+		return -1;
+	else if (pa > pb)
+		return 1;
+	else
+		return 0;
+}
+
+static struct lksmith_cond *lksmith_cond_find(const void *ptr)
+{
+	struct lksmith_cond exemplar;
+	memset(&exemplar, 0, sizeof(exemplar));
+	exemplar.ptr = ptr;
+	return RB_FIND(cond_tree, &g_cond_tree, &exemplar);
+}
+
+static int lksmith_cond_insert(const void *ptr, struct lksmith_cond **cond)
+{
+	struct lksmith_cond *cnd, *and;
+	cnd = calloc(1, sizeof(*cnd));
+	if (!cnd) {
+		return ENOMEM;
+	}
+	cnd->ptr = ptr;
+	and = RB_INSERT(cond_tree, &g_cond_tree, cnd);
+	if (and) {
+		free(cnd);
+		return EEXIST;
+	}
+	*cond = cnd;
+	return 0;
 }
 
 /******************************************************************
@@ -1143,6 +1216,73 @@ int lksmith_check_locked(const void *ptr)
 	if (!tls->intercept)
 		return 0;
 	return tls_contains_lid(tls, ptr) ? 0 : -1;
+}
+
+int lksmith_cond_prewait(const void *cond, const void *mutex,
+			struct lksmith_cond **out)
+{
+	struct lksmith_cond *cnd;
+	int ret;
+
+	r_pthread_mutex_lock(&g_cond_tree_lock);
+	cnd = lksmith_cond_find(cond);
+	if (!cnd) {
+		ret = lksmith_cond_insert(cond, &cnd);
+		if (ret) {
+			r_pthread_mutex_unlock(&g_cond_tree_lock);
+			lksmith_error(ret, "lksmith_cond_insert(cond=%p,"
+				"mutex=%p): failed ", cond, mutex);
+			return ret;
+		}
+	}
+	if (!cnd->lock) {
+		cnd->lock = mutex;
+	} else if (cnd->lock != mutex) {
+		r_pthread_mutex_unlock(&g_cond_tree_lock);
+		ret = EINVAL;
+		lksmith_error(ret, "lksmith_cond_prewait(cond=%p,"
+		      "mutex=%p): you are currently waiting (or are about "
+		      "to wait) on this condition variable with a different "
+		      "lock, %p.", cond, mutex, cnd->lock);
+		return ret;
+	}
+	cnd->refcnt++;
+	*out = cnd;
+	r_pthread_mutex_unlock(&g_cond_tree_lock);
+	return 0;
+}
+
+void lksmith_cond_postwait(struct lksmith_cond *cnd)
+{
+	r_pthread_mutex_lock(&g_cond_tree_lock);
+	if (--cnd->refcnt == 0) {
+		cnd->lock = NULL;
+	}
+	r_pthread_mutex_unlock(&g_cond_tree_lock);
+}
+
+int lksmith_cond_predestroy(const void *cond)
+{
+	struct lksmith_cond *cnd;
+	uint64_t refcnt;
+	int ret;
+
+	r_pthread_mutex_lock(&g_cond_tree_lock);
+	cnd = lksmith_cond_find(cond);
+	if (cnd) {
+		refcnt = cnd->refcnt;
+	} else {
+		refcnt = 0;
+	}
+	r_pthread_mutex_unlock(&g_cond_tree_lock);
+	if (refcnt != 0) {
+		ret = EINVAL;
+		lksmith_error(ret, "lksmith_cond_predestroy(cond=%p): "
+			"you are trying to destroy a condition variable "
+			"that is in use!", cond);
+		return ret;
+	}
+	return 0;
 }
 
 int lksmith_set_thread_name(const char *const name)

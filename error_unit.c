@@ -369,6 +369,66 @@ static int test_recursion_on_nonrecursive(void)
 	return 0;
 }
 
+static pthread_cond_t g_tbcw_cond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t g_tbcw_lock1 = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t g_tbcw_lock2 = PTHREAD_MUTEX_INITIALIZER;
+
+static int tbcw_thread1(void)
+{
+	int ret;
+
+	pthread_mutex_lock(&g_tbcw_lock1);
+	ret = pthread_cond_wait(&g_tbcw_cond, &g_tbcw_lock1);
+	pthread_mutex_unlock(&g_tbcw_lock1);
+	if (ret) {
+		pthread_mutex_lock(&g_tbcw_lock2);
+		pthread_cond_signal(&g_tbcw_cond);
+		pthread_mutex_unlock(&g_tbcw_lock2);
+	}
+	return ret;
+}
+
+THREAD_WRAPPER_VOID(tbcw_thread1);
+
+static int tbcw_thread2(void)
+{
+	int ret;
+
+	pthread_mutex_lock(&g_tbcw_lock2);
+	ret = pthread_cond_wait(&g_tbcw_cond, &g_tbcw_lock2);
+	pthread_mutex_unlock(&g_tbcw_lock2);
+	if (ret) {
+		pthread_mutex_lock(&g_tbcw_lock1);
+		pthread_cond_signal(&g_tbcw_cond);
+		pthread_mutex_unlock(&g_tbcw_lock1);
+	}
+	return ret;
+}
+
+THREAD_WRAPPER_VOID(tbcw_thread2);
+
+static int test_bad_cond_wait(void)
+{
+	pthread_t thread_1, thread_2;
+	void *rval1 = NULL, *rval2 = NULL;
+
+	EXPECT_ZERO(pthread_create(&thread_1, NULL, tbcw_thread1_wrap, NULL));
+	EXPECT_ZERO(pthread_create(&thread_2, NULL, tbcw_thread2_wrap, NULL));
+	EXPECT_ZERO(pthread_join(thread_1, &rval1));
+	EXPECT_ZERO(pthread_join(thread_2, &rval2));
+	if (rval1 == NULL) {
+		EXPECT_NOT_EQ(rval2, NULL);
+	} else if (rval2 == NULL) {
+		EXPECT_NOT_EQ(rval1, NULL);
+	} else {
+		fprintf(stderr, "expected one of the threads to fail.");
+		return EINVAL;
+	}
+	EXPECT_EQ(find_recorded_error(EINVAL), 1);
+	clear_recorded_errors();
+	return 0;
+}
+
 int main(void)
 {
 	struct timespec ts;
@@ -389,6 +449,8 @@ int main(void)
 	EXPECT_ZERO(test_invalid_cond_wait(&ts));
 
 	EXPECT_ZERO(test_recursion_on_nonrecursive());
+
+	EXPECT_ZERO(test_bad_cond_wait());
 
 	return EXIT_SUCCESS;
 }
