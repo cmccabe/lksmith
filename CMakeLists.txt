@@ -33,7 +33,9 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${CMAKE_SOURCE_DIR}/cmake_modules")
 set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS} -O3 -Wuninitialized")
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS} -g -O0 -fstack-protector")
 set(CMAKE_CURRENT_BINARY_DIR, builds)
-SET(CMAKE_INSTALL_PREFIX /usr/local)
+if (NOT CMAKE_INSTALL_PREFIX)
+    set(CMAKE_INSTALL_PREFIX /usr/local)
+endif()
 
 # If our compiler and linker both support the __thread attribute, we can use
 # it as a more efficient alternative to POSIX thread-local storage in some
