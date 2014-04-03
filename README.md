@@ -17,7 +17,7 @@ Using locksmith is simple.  You do not need to recompile your program.  Just
 run your program with the LD\_PRELOAD environment variable set to the locksmith
 library.  For example,
 
-    LKSMITH_OUTPUT=syslog LD_PRELOAD=/path/to/liblksmith.so /bin/ls
+    LKSMITH_LOG=syslog LD_PRELOAD=/path/to/liblksmith.so /bin/ls
 
 What kinds of errors does Locksmith catch?
 --------------------------------------------
@@ -42,16 +42,16 @@ using different mutexes.
 
 What choices are available for LKSMITH\_OUTPUT? 
 -------------------------------------------------
-    LKSMITH_OUTPUT=syslog
+    LKSMITH_LOG=syslog
 This will redirect all output to syslog.
 
-    LKSMITH_OUTPUT=stderr
+    LKSMITH_LOG=stderr
 This will redirect all output to standard error.
 
-    LKSMITH_OUTPUT=stdout
+    LKSMITH_LOG=stdout
 This will redirect all output to standard output.
 
-    LKSMITH_OUTPUT=file:///tmp/foo
+    LKSMITH_LOG=file:///tmp/foo
 This will redirect all output to /tmp/foo.  Substitute your own file name as appropriate.
 
 What languages and libraries is Locksmith compatible with? 
