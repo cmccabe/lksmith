@@ -14,11 +14,11 @@ usage() {
 Configuration:
   -h, --help              display this help and exit
   -V, --version           display version information and exit
-      --srcdir=DIR        find the sources in DIR
+      --srcdir DIR        find the sources in DIR
       --debug-build       create a debug (rather than release) build.
 
 Installation directories:
-  --prefix=PREFIX         Set CMAKE_INSTALL_PREFIX.  Default $install_prefix_default
+  --prefix PREFIX         Set CMAKE_INSTALL_PREFIX.  Default $install_prefix_default
 
 Some influential environment variables:
   CC          C compiler command
