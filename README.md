@@ -40,7 +40,7 @@ current thread.
 5. Simultaneously calling pthread_cond_wait on the same condition variable
 using different mutexes.
 
-What choices are available for LKSMITH\_OUTPUT? 
+What choices are available for LKSMITH\_LOG?
 -------------------------------------------------
     LKSMITH_LOG=syslog
 This will redirect all output to syslog.
