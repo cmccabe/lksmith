@@ -75,7 +75,7 @@ if (USE_LIBUNWIND)
 elseif (HAVE_LIBC_BACKTRACE)
     set(PLATFORM_FILES ${PLATFORM_FILES} libc_backtrace.c)
 else()
-    LOG(FATAL_ERROR "can't find any backtrace scheme to use.  Perhaps install libunwind.")
+    MESSAGE(FATAL_ERROR "can't find any backtrace scheme to use.  Perhaps install libunwind.")
 endif()
 
 add_library(lksmith SHARED
