@@ -678,8 +678,9 @@ static void lk_remove_sorted(struct lksmith_lock ** __restrict * __restrict arr,
 	}
 	if (i == *num)
 		return;
-	memmove(&(*arr)[i - 1], &(*arr)[i],
-		sizeof(struct lksmith_lock*) * (*num - i - 1));
+	if (i < (*num -1))
+		memmove(&(*arr)[i], &(*arr)[i + 1],
+			sizeof(struct lksmith_lock*) * (*num - i - 1));
 	narr = realloc(*arr, sizeof(struct lksmith_lock*) * (--*num));
 	if (narr || (*num == 0))
 		*arr = narr;
