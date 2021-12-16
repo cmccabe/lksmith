@@ -27,6 +27,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "config.h"
 #include "error.h"
 #include "handler.h"
 #include "util.h"
@@ -198,12 +199,20 @@ const char *terror(int err)
 {
 #ifdef HAVE_IMPROVED_TLS
 	static __thread char buf[4096];
+
+#  if (_POSIX_C_SOURCE >= 200112L) && !  _GNU_SOURCE
+	/* XSI compliant */
 	int ret;
 
 	ret = strerror_r(err, buf, sizeof(buf));
-	if (ret)
-		return "unknown error";
-	return buf;
+	return ret ? buf :  "unknown error";
+#  else
+	/* GNU specific */
+	char *str;
+
+	str = strerror_r(err, buf, sizeof(buf));
+	return str ? : "unknown error";
+#  endif
 #else
 	if ((err < 0) || (err >= sys_nerr)) {
 		return "unknown error";
@@ -211,4 +220,3 @@ const char *terror(int err)
 	return sys_errlist[err];
 #endif
 }
-
