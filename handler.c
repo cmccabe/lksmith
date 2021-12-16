@@ -267,7 +267,7 @@ int pthread_spin_init(pthread_spinlock_t *lock, int pshared)
 		return ret;
 	ret = r_pthread_spin_init(lock, pshared);
 	if (ret) {
-		lksmith_error(ret, "pthread_spin_init(mutex=%p): "
+		lksmith_error(ret, "pthread_spin_init(lock=%p): "
 			"failed with error %s (%d)", lock, terror(ret), ret);
 		lksmith_destroy((const void*)lock);
 		return ret;
@@ -322,7 +322,7 @@ int pthread_cond_init(pthread_cond_t *__restrict cond,
 {
 	int ret = r_pthread_cond_init(cond, attr);
 	if (ret) {
-		lksmith_error(ret, "pthread_cond_init(mutex=%p): "
+		lksmith_error(ret, "pthread_cond_init(cond=%p): "
 			"failed with error %s (%d)", cond, terror(ret), ret);
 	}
 	return ret;
